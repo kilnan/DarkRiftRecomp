@@ -1,0 +1,55 @@
+# Config file for Dark Rift (USA) recompilation.
+[input]
+entrypoint = 0x80000400
+# The ELF comes from the matching decompilation (github.com/Unnunu/darkrift).
+elf_path = "darkrift.elf"
+rom_file_path = "darkrift.z64"
+output_func_path = "RecompiledFuncs"
+
+# libultra `static` functions that have no symbol in the ELF, recovered from the
+# objects' .mdebug by scripts/mdebug_static_funcs.py.
+manual_funcs = [
+    { name = "nullsub", section = ".main", vram = 0x8000BB14, size = 0x8 }, # build/src/game_modes.o
+    { name = "read8", section = ".main", vram = 0x8003AC40, size = 0x8 }, # build/ultralib/src/audio/seq.o
+    { name = "readVarLen", section = ".main", vram = 0x8003AC48, size = 0x4C }, # build/ultralib/src/audio/seq.o
+    { name = "read32", section = ".main", vram = 0x8003B0C8, size = 0x50 }, # build/ultralib/src/audio/seq.o
+    { name = "read16", section = ".main", vram = 0x8003B118, size = 0x30 }, # build/ultralib/src/audio/seq.o
+    { name = "_VirtualToPhysicalTask", section = ".main", vram = 0x8003B5A0, size = 0x11C }, # build/ultralib/src/io/sptask.o
+    { name = "__setUsptFromTempo", section = ".main", vram = 0x8003BDD8, size = 0x8 }, # build/ultralib/src/audio/seqplayer.o
+    { name = "__handleMetaMsg", section = ".main", vram = 0x8003C1AC, size = 0x78 }, # build/ultralib/src/audio/seqplayer.o
+    { name = "__handleMIDIMsg", section = ".main", vram = 0x8003C44C, size = 0x818 }, # build/ultralib/src/audio/seqplayer.o
+    { name = "__handleNextSeqEvent", section = ".main", vram = 0x8003CC64, size = 0x8 }, # build/ultralib/src/audio/seqplayer.o
+    { name = "__seqpVoiceHandler", section = ".main", vram = 0x8003CC6C, size = 0x624 }, # build/ultralib/src/audio/seqplayer.o
+    { name = "_removeEvents", section = ".main", vram = 0x8003D590, size = 0x7C }, # build/ultralib/src/audio/sndplayer.o
+    { name = "_DivS32ByF32", section = ".main", vram = 0x8003D60C, size = 0x8 }, # build/ultralib/src/audio/sndplayer.o
+    { name = "_handleEvent", section = ".main", vram = 0x8003D614, size = 0x8 }, # build/ultralib/src/audio/sndplayer.o
+    { name = "_sndpVoiceHandler", section = ".main", vram = 0x8003D61C, size = 0x548 }, # build/ultralib/src/audio/sndplayer.o
+    { name = "_timeToSamplesNoRound", section = ".main", vram = 0x8003E050, size = 0x8 }, # build/ultralib/src/audio/synthesizer.o
+    { name = "__nextSampleTime", section = ".main", vram = 0x8003E190, size = 0x8 }, # build/ultralib/src/audio/synthesizer.o
+    { name = "_bnkfPatchWaveTable", section = ".main", vram = 0x8003E900, size = 0x8 }, # build/ultralib/src/audio/bnkf.o
+    { name = "_bnkfPatchSound", section = ".main", vram = 0x8003E908, size = 0x8 }, # build/ultralib/src/audio/bnkf.o
+    { name = "_bnkfPatchInst", section = ".main", vram = 0x8003E910, size = 0xEC }, # build/ultralib/src/audio/bnkf.o
+    { name = "_bnkfPatchBank", section = ".main", vram = 0x8003E9FC, size = 0x8 }, # build/ultralib/src/audio/bnkf.o
+    { name = "_decodeChunk", section = ".main", vram = 0x80043400, size = 0x12C }, # build/ultralib/src/audio/load.o
+    { name = "_getRate", section = ".main", vram = 0x80043EC4, size = 0x1D0 }, # build/ultralib/src/audio/env.o
+    { name = "_pullSubFrame", section = ".main", vram = 0x80044094, size = 0x298 }, # build/ultralib/src/audio/env.o
+    { name = "_getVol", section = ".main", vram = 0x8004432C, size = 0xB0 }, # build/ultralib/src/audio/env.o
+]
+
+[patches]
+stubs = []
+
+# Game functions whose names clash with the host C library.
+renamed = [
+    "abs",
+]
+ignored = [
+    # RSP microcode blobs, not CPU code
+    "rspbootTextEnd",
+    "gspFast3DTextStart",
+    "gspFast3DTextEnd",
+    "gspDarkRift3DTextStart",
+    "gspDarkRift3DTextEnd",
+    "aspMainTextStart",
+    "aspMainTextEnd",
+]
