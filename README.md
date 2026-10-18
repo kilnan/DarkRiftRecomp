@@ -15,6 +15,7 @@ Work in progress, currently tested on macOS (Apple Silicon) only.
 - [x] Boots and is playable with glitches; stages and UI (Fast3D) render through RT64
 - [x] Fighters render: Dark Rift draws its characters with SGI's *Turbo3D* microcode, which RT64 does not support, so Turbo3D tasks are translated to Fast3D display lists on the fly ([`src/main/turbo3d.cpp`](src/main/turbo3d.cpp))
 - [x] Turbo3D screen-space objects (`GT_FLAG_NO_XFM`, used for 2D effects and menu elements) are drawn through a matrix that undoes the viewport transform
+- [x] HUD and other 2D sprites: RT64 currently draws nothing for the game's 2D sprite rectangles in some scenes (health bars, names and timer in fights, labels on the character select screen). As a workaround the sprite list is rewritten at render time to draw each rectangle as two textured triangles ([`src/main/darkrift_hud.cpp`](src/main/darkrift_hud.cpp)); `DARKRIFT_NO_HUD_FIX=1` disables it
 - [ ] Remaining glitches: the areas outside 4:3 are not filled correctly in widescreen
 - [ ] Controls, settings and menus still carry over defaults from the frontend this is based on.
 

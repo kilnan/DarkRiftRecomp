@@ -2,6 +2,7 @@
 #include <vector>
 #include <unordered_set>
 #include "darkrift_turbo3d.h"
+#include "darkrift_hud.h"
 #include <memory>
 #include <cstring>
 #include <variant>
@@ -561,6 +562,29 @@ void zelda64::renderer::RT64Context::send_dl(const OSTask* task) {
             app->processDisplayLists(app->core.RDRAM, wrapper, 0, true);
             words[bg_cmd / 4] = saved0; words[bg_cmd / 4 + 1] = saved1;
             return;
+        }
+    }
+
+    // Workaround: RT64 draws nothing for the 2D sprite list's texture rectangles during fights, so the
+    // list (the main list's second G_DL) is replaced by a copy that draws them as triangles.
+    static const bool hud_fix = std::getenv("DARKRIFT_NO_HUD_FIX") == nullptr;
+    if (hud_fix && ucode == darkrift_fast3d_text) {
+        uint32_t* words = reinterpret_cast<uint32_t*>(app->core.RDRAM);
+        const uint32_t base = task->t.data_ptr & 0x3FFFF8;
+        uint32_t dl_index = 0;
+        for (uint32_t a = base; a < base + task->t.data_size; a += 8) {
+            const uint32_t op = words[a / 4] >> 24;
+            if (op == 0xB8) {
+                break;
+            }
+            if (op == 0x06 && dl_index++ == 1) {
+                const uint32_t rewritten = darkrift::rewrite_2d_list(app->core.RDRAM, words[a / 4 + 1]);
+                if (rewritten != 0) {
+                    skipped.emplace_back(a + 4, words[a / 4 + 1]);
+                    words[a / 4 + 1] = rewritten;
+                }
+                break;
+            }
         }
     }
 
