@@ -2,7 +2,7 @@
 <head>
 	<link type="text/rcss" href="rml.rcss"/>
 	<link type="text/rcss" href="recomp.rcss"/>
-	<title>Inventory</title>
+	<title>Settings</title>
 	<style>
 		body
 		{

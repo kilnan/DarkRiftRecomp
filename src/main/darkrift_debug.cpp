@@ -374,7 +374,8 @@ void darkrift::debug::on_vi() {
             last_mode = mode;
         }
     }
-    if (!script.empty() && ultramodern::is_game_started()) {
+    // With --autostart the script waits for the game; without it, it drives the launcher and menus.
+    if (!script.empty() && (ultramodern::is_game_started() || !autostart)) {
         advance_script();
     }
     recomp::update_rumble();
