@@ -1,0 +1,160 @@
+diff --git a/src/hle/rt64_state.cpp b/src/hle/rt64_state.cpp
+index 00ebbf0..c83323f 100644
+--- a/src/hle/rt64_state.cpp
++++ b/src/hle/rt64_state.cpp
+@@ -542,6 +542,24 @@ namespace RT64 {
+         FramebufferPair &fbPair = workload.fbPairs[fbPairIndex];
+         fbPair.flushReason = flushReason;
+ 
++        // DARKRIFT-TEMP: log each submitted framebuffer pair.
++        if (getenv("DARKRIFT_LOG_FBPAIRS")) {
++            static uint64_t dr_n = 0;
++            if (++dr_n) {
++                int firstX = -1, firstY = -1, lastX = -1, lastY = -1;
++                for (uint32_t p = 0; p < fbPair.projectionCount; p++) {
++                    const Projection &proj = fbPair.projections[p];
++                    for (uint32_t c = 0; c < proj.gameCallCount; c++) {
++                        const auto &cd = proj.gameCalls[c].callDesc;
++                        if (firstX < 0) { firstX = cd.rect.ulx / 4; firstY = cd.rect.uly / 4; }
++                        lastX = cd.rect.ulx / 4; lastY = cd.rect.uly / 4;
++                    }
++                }
++                fprintf(stderr, "[fbpair] wl %d pair %d color %06X depth %06X reason %d calls %u projs %u first %d,%d last %d,%d\n", workloadCursor, fbPairIndex,
++                    fbPair.colorImage.address, fbPair.depthImage.address, int(flushReason), fbPair.gameCallCount, fbPair.projectionCount, firstX, firstY, lastX, lastY);
++            }
++        }
++
+         // Add all the pending framebuffer operations to the first one that was found.
+         flushFramebufferOperations(fbPair);
+ 
+@@ -622,6 +640,15 @@ namespace RT64 {
+         if (!rdramCheckPending) {
+             return;
+         }
++
++        // DARKRIFT-TEMP: skip RDRAM change detection to see if it overwrites rendered content.
++        static const bool dr_skip = getenv("DARKRIFT_NO_RDRAM_CHECK") != nullptr;
++        static uint64_t dr_checks = 0;
++        if (getenv("DARKRIFT_LOG_CALLS") && ((dr_checks++ % 100) == 0)) fprintf(stderr, "[rdramcheck] %llu\n", (unsigned long long)dr_checks);
++        if (dr_skip) {
++            rdramCheckPending = false;
++            return;
++        }
+         
+         assert(drawFbOperations.empty() && "There should be no pending framebuffer operations when this is started.");
+         assert(drawFbDiscards.empty() && "There should be no pending framebuffer discards when this is started.");
+@@ -632,6 +659,10 @@ namespace RT64 {
+         {
+             framebufferManager.storeRAM(workload.fbStorage, RDRAM, fbPairIndex);
+             framebufferManager.checkRAM(RDRAM, differentFbs, true);
++            if (getenv("DARKRIFT_LOG_CALLS") && !differentFbs.empty()) {
++                static uint64_t dr_up = 0;
++                if ((dr_up++ % 20) == 0) fprintf(stderr, "[rdramcheck] %zu framebuffers changed in RDRAM, uploading (count %llu)\n", differentFbs.size(), (unsigned long long)dr_up);
++            }
+             if (!differentFbs.empty()) {
+                 RenderWorkerExecution execution(ext.framebufferGraphicsWorker);
+                 framebufferManager.uploadRAM(ext.framebufferGraphicsWorker, differentFbs.data(), differentFbs.size(), workload.fbChangePool, RDRAM, true, drawFbOperations, drawFbDiscards, ext.shaderLibrary);
+@@ -972,6 +1003,15 @@ namespace RT64 {
+                     }
+                     else {
+                         meshDesc.rawVertexStart = rawVertexIndex;
++                        // DARKRIFT-TEMP: check the texcoords found at this call's raw vertex start.
++                        if (getenv("DARKRIFT_LOG_CALLS") && (callDesc.rect.ulx / 4 == 32) && (callDesc.rect.uly / 4 == 26)) {
++                            static uint64_t dr_n = 0;
++                            const auto &tc = workload.drawData.triTcFloats;
++                            const size_t i = size_t(rawVertexIndex) * 2;
++                            if ((dr_n++ % 30) == 0) fprintf(stderr, "[rawvtx] start %u tcsize %zu tc0 %.1f,%.1f tc3 %.1f,%.1f possize %zu\n", rawVertexIndex, tc.size(),
++                                (i + 1 < tc.size()) ? tc[i] : -1.0f, (i + 1 < tc.size()) ? tc[i + 1] : -1.0f, (i + 7 < tc.size()) ? tc[i + 6] : -1.0f, (i + 7 < tc.size()) ? tc[i + 7] : -1.0f,
++                                workload.drawData.triPosFloats.size());
++                        }
+                         rawVertexIndex += callDesc.triangleCount * 3;
+                     }
+ 
+@@ -1116,6 +1156,29 @@ namespace RT64 {
+                     renderParams.omH = shaderDesc.otherMode.H;
+                     renderParams.flags = shaderDesc.flags;
+ 
++                    // DARKRIFT-TEMP
++                    if (getenv("DARKRIFT_LOG_CALLS") && (callDesc.otherMode.cycleType() == G_CYC_COPY)) {
++                        const int rx = callDesc.rect.ulx / 4, ry = callDesc.rect.uly / 4;
++                        if (rx == 32 || ry < 20 || (ry >= 26 && ry <= 41)) {
++                            static uint64_t dr_n = 0;
++                            if (++dr_n) fprintf(stderr, "[call2] idx %u mod27 %u rect %d,%d-%d,%d scissor %d,%d-%d,%d mode %u origins %u,%u tris %u minW %u maxW %u\n",
++                                callDesc.callIndex, callDesc.callIndex % 27, rx, ry, callDesc.rect.lrx / 4, callDesc.rect.lry / 4,
++                                callDesc.scissorRect.ulx / 4, callDesc.scissorRect.uly / 4, callDesc.scissorRect.lrx / 4, callDesc.scissorRect.lry / 4, (unsigned)callDesc.scissorMode,
++                                (unsigned)callDesc.rectLeftOrigin, (unsigned)callDesc.rectRightOrigin, callDesc.triangleCount, callDesc.minWorldMatrix, callDesc.maxWorldMatrix);
++                        }
++                    }
++                    // DARKRIFT-TEMP: the GPU indexes these arrays with callDesc.callIndex.
++                    if (getenv("DARKRIFT_LOG_CALLS")) {
++                        static uint64_t dr_mis = 0, dr_ok = 0;
++                        const size_t pos = workload.drawData.rdpParams.size();
++                        if (pos != callDesc.callIndex) {
++                            if ((dr_mis++ % 200) == 0) fprintf(stderr, "[callidx] MISMATCH pos %zu callIndex %u rect %d,%d cyc %u (ok %llu mis %llu)\n", pos, callDesc.callIndex,
++                                callDesc.rect.ulx / 4, callDesc.rect.uly / 4, callDesc.otherMode.cycleType() >> 20, (unsigned long long)dr_ok, (unsigned long long)dr_mis);
++                        }
++                        else {
++                            dr_ok++;
++                        }
++                    }
+                     workload.drawData.rdpParams.emplace_back(gameCall.callDesc.rdpParams);
+                     workload.drawData.renderParams.emplace_back(renderParams);
+                 }
+diff --git a/src/render/rt64_framebuffer_renderer.cpp b/src/render/rt64_framebuffer_renderer.cpp
+index 133c039..66ee12d 100644
+--- a/src/render/rt64_framebuffer_renderer.cpp
++++ b/src/render/rt64_framebuffer_renderer.cpp
+@@ -272,6 +272,17 @@ namespace RT64 {
+                 gpuTile.flags.rawTMEM = !textureReplaced && callTile.rawTMEM;
+                 gpuTile.flags.hasMipmaps = hasMipmaps;
+                 gpuTile.flags.shiftedByHalf = shiftedByHalf;
++                // DARKRIFT-TEMP
++                if (getenv("DARKRIFT_LOG_GPUTILE") && callTile.sampleWidth == 89 && callTile.sampleHeight == 16) {
++                    static uint64_t dr_n = 0;
++                    if ((dr_n++ % 40) == 0) {
++                        uint32_t flagBits = 0;
++                        memcpy(&flagBits, &gpuTile.flags, std::min(sizeof(flagBits), sizeof(gpuTile.flags)));
++                        fprintf(stderr, "[gputile] idx %u ul %.3f,%.3f tc %.3f,%.3f shift %u,%u mask %X,%X dims %.0fx%.0fx%.0f flags %08X\n", gpuTile.textureIndex,
++                            gpuTile.ulScale.x, gpuTile.ulScale.y, gpuTile.tcScale.x, gpuTile.tcScale.y, gpuTile.texelShift.x, gpuTile.texelShift.y, gpuTile.texelMask.x, gpuTile.texelMask.y,
++                            gpuTile.textureDimensions.x, gpuTile.textureDimensions.y, gpuTile.textureDimensions.z, flagBits);
++                    }
++                }
+             }
+         }
+     }
+@@ -315,7 +326,8 @@ namespace RT64 {
+             descTextureSet = std::make_unique<FramebufferRendererDescriptorTextureSet>(worker->device, ((textureCacheSize + 1) * 3) / 2);
+         }
+ 
+-        if (createSet || (descriptorTextureReplacementMapEnabled != textureCacheReplacementMapEnabled)) {
++        static const bool dr_full_rewrite = getenv("DARKRIFT_DESC_REWRITE") != nullptr; // DARKRIFT-TEMP
++        if (createSet || dr_full_rewrite || (descriptorTextureReplacementMapEnabled != textureCacheReplacementMapEnabled)) {
+             descriptorTextureVersions.clear();
+             descriptorTextureGlobalVersion = 0;
+             descriptorTextureReplacementMapEnabled = textureCacheReplacementMapEnabled;
+@@ -382,7 +394,7 @@ namespace RT64 {
+         descriptorTextureVersions.resize(textureCacheSize, 0);
+ 
+         // Update texture vector with static textures from the cache and dynamic resource views.
+-        if (descriptorTextureGlobalVersion != textureCacheGlobalVersion) {
++        if (dr_full_rewrite || descriptorTextureGlobalVersion != textureCacheGlobalVersion) {
+             const uint32_t textureVersionSize = static_cast<uint32_t>(textureCacheVersions.size());
+             for (uint32_t i = 0; i < textureVersionSize; i++) {
+                 if (textureCacheVersions[i] == descriptorTextureVersions[i]) {
+@@ -1656,6 +1668,16 @@ namespace RT64 {
+                             triangles.screenScale = { viewportRect.width / framebuffer.viewport.width, viewportRect.height / framebuffer.viewport.height };
+                             triangles.screenOffset.x = halfPixelOffset.x + ((viewportRect.x + viewportRect.width / 2.0f) - halfViewportSize.x) / halfViewportSize.x;
+                             triangles.screenOffset.y = halfPixelOffset.y + (halfViewportSize.y - (viewportRect.y + viewportRect.height / 2.0f)) / halfViewportSize.y;
++                            // DARKRIFT-TEMP
++                            if (getenv("DARKRIFT_LOG_CALLS")) {
++                                const int rx = call.callDesc.rect.ulx / 4, ry = call.callDesc.rect.uly / 4;
++                                if ((rx == 32 && ry == 26) || (rx == 5 && ry < 12)) {
++                                    static uint64_t dr_n = 0;
++                                    if ((dr_n++ % 30) == 0) fprintf(stderr, "[rectvp] rect %d,%d vp %.1f,%.1f %.1fx%.1f scale %.4f,%.4f off %.4f,%.4f fbvp %.1fx%.1f inv %.3f fb %06X res %.2f\n", rx, ry,
++                                        viewportRect.x, viewportRect.y, viewportRect.width, viewportRect.height, triangles.screenScale.x, triangles.screenScale.y,
++                                        triangles.screenOffset.x, triangles.screenOffset.y, framebuffer.viewport.width, framebuffer.viewport.height, invRatioScale, fbPair.colorImage.address, p.resolutionScale.x);
++                                }
++                            }
+ 
+                             if (p.postBlendNoise) {
+                                 // Indicate if post blend dither noise should be applied.
