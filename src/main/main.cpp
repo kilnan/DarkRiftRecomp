@@ -366,6 +366,7 @@ std::vector<recomp::GameEntry> supported_games = {
         .has_compressed_code = false,
         .entrypoint_address = get_entrypoint_address(),
         .entrypoint = recomp_entrypoint,
+        .on_init_callback = darkrift::debug::on_game_init,
     },
 };
 

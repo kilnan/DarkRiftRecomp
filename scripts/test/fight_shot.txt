@@ -1,25 +1,7 @@
-wait 1500
-press START 10
-wait 50
-press START 10
-wait 50
-press START 10
-wait 50
-press START 10
-wait 50
-press START 10
-wait 50
-press START 10
-wait 50
-press START 10
-wait 50
-press START 10
-wait 50
-press START 10
-wait 50
-press START 10
-wait 50
-wait 300
+# Reach a Tournament fight (waits on the game mode), then capture it.
+wait 600
+start_until_battle 6000
+wait 420
 shot f01
 wait 150
 shot f02

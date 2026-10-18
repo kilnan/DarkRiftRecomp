@@ -4,9 +4,13 @@
 #include <cstdint>
 #include <string>
 
+#include "recomp.h"
+
 namespace darkrift::debug {
     // Parses --autostart / --script / --shots (see darkrift_debug.cpp).
     void init(int argc, char** argv);
+    // Game init callback: keeps the RDRAM pointer so scripts can read game state.
+    void on_game_init(uint8_t* rdram, recomp_context* ctx);
     // VI callback: advances the input script, then forwards to recomp::update_rumble.
     void on_vi();
     // Input callback: returns scripted input for controller 1 while a script runs.

@@ -14,6 +14,7 @@
 //   hold <BTN[+BTN...]> <frames>     hold buttons without the release gap
 //   stick <x> <y> <frames>           hold the analog stick (-1..1)
 //   shot <name>                      save a capture of the game window as <name>.png
+//   start_until_battle <frames>      press START once a second until a fight starts (gives up after <frames>)
 //   quit                             exit the game
 // Buttons: A B Z START L R DU DD DL DR CU CD CL CR. Lines starting with # are comments.
 
@@ -44,7 +45,7 @@ namespace recompui {
 namespace {
 
 struct Step {
-    enum class Kind { Wait, Hold, Stick, Shot, Quit } kind;
+    enum class Kind { Wait, Hold, Stick, Shot, Quit, StartUntilBattle } kind;
     uint32_t frames = 0;
     uint16_t buttons = 0;
     float x = 0, y = 0;
@@ -62,6 +63,26 @@ bool step_started = false;
 uint16_t scripted_buttons = 0;
 float scripted_x = 0, scripted_y = 0;
 std::atomic<uint64_t> vi_count = 0;
+std::atomic<uint8_t*> game_rdram = nullptr;
+
+// gCurrentGameMode (s16) in the decompilation; fights are GAME_MODE_BATTLE_AARON (6) to _ZENMURON (16).
+constexpr uint32_t GAME_MODE_ADDR = 0x8005BED0;
+constexpr int GAME_MODE_BATTLE_FIRST = 6;
+constexpr int GAME_MODE_BATTLE_LAST = 16;
+
+int game_mode() {
+    uint8_t* rdram = game_rdram.load();
+    if (rdram == nullptr) {
+        return -1;
+    }
+    // RDRAM is stored as host-order 32-bit words, so halfwords are swizzled.
+    return *reinterpret_cast<int16_t*>(rdram + ((GAME_MODE_ADDR & 0x3FFFFFF) ^ 2));
+}
+
+bool in_battle() {
+    const int mode = game_mode();
+    return mode >= GAME_MODE_BATTLE_FIRST && mode <= GAME_MODE_BATTLE_LAST;
+}
 
 uint16_t parse_buttons(const std::string& spec) {
     static const std::pair<const char*, uint16_t> names[] = {
@@ -122,6 +143,9 @@ void load_script(const char* path) {
         } else if (op == "shot") {
             s.kind = Step::Kind::Shot;
             ss >> s.name;
+        } else if (op == "start_until_battle") {
+            s.kind = Step::Kind::StartUntilBattle;
+            ss >> s.frames;
         } else if (op == "quit") {
             s.kind = Step::Kind::Quit;
         } else {
@@ -165,7 +189,17 @@ void advance_script() {
                 break;
             }
         }
-        if (step_frames_left > 0) {
+        if (s.kind == Step::Kind::StartUntilBattle) {
+            if (in_battle() || step_frames_left == 0) {
+                fprintf(stderr, "[debug] vi %llu: start_until_battle done, mode %d\n", (unsigned long long)vi_count.load(), game_mode());
+            } else {
+                // Hold START for 5 frames out of every 60.
+                scripted_buttons = ((step_frames_left % 60) < 5) ? 0x1000 : 0;
+                step_frames_left--;
+                return;
+            }
+        }
+        else if (step_frames_left > 0) {
             step_frames_left--;
             return;
         }
@@ -229,8 +263,20 @@ void darkrift::debug::init(int argc, char** argv) {
     }
 }
 
+void darkrift::debug::on_game_init(uint8_t* rdram, recomp_context*) {
+    game_rdram = rdram;
+}
+
 void darkrift::debug::on_vi() {
     vi_count++;
+    if (!script.empty()) {
+        static int last_mode = -2;
+        const int mode = game_mode();
+        if (mode != last_mode) {
+            fprintf(stderr, "[debug] vi %llu: game mode %d\n", (unsigned long long)vi_count.load(), mode);
+            last_mode = mode;
+        }
+    }
     if (!script.empty() && ultramodern::is_game_started()) {
         advance_script();
     }
