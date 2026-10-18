@@ -206,6 +206,9 @@ ultramodern::renderer::GraphicsApi map_graphics_api(RT64::UserConfiguration::Gra
     std::exit(EXIT_FAILURE);
 }
 
+// The game window, created by the frontend.
+extern SDL_Window* window;
+
 zelda64::renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::WindowHandle window_handle, bool debug) {
     static unsigned char dummy_rom_header[0x40];
     recompui::set_render_hooks();
@@ -266,11 +269,16 @@ zelda64::renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::rendere
     // Set initial user config settings based on the current settings.
     auto& cur_config = ultramodern::renderer::get_graphics_config();
     set_application_user_config(app.get(), cur_config);
-    app->userConfig.developerMode = debug;
+    // DARKRIFT_DEVELOPER=1 enables RT64's developer mode (F1 inspector) without changing the saved settings.
+    app->userConfig.developerMode = debug || (std::getenv("DARKRIFT_DEVELOPER") != nullptr);
     // Force gbi depth branches to prevent LODs from kicking in.
     app->enhancementConfig.f3dex.forceBranch = true;
     // Set postBlendNoiseNegative
     app->emulatorConfig.dither.postBlendNoiseNegative = true;
+    // DARKRIFT-TEMP: DARKRIFT_NO_RENDER_TO_RAM=1 disables RT64's native-resolution render to RDRAM.
+    if (std::getenv("DARKRIFT_NO_RENDER_TO_RAM") != nullptr) {
+        app->emulatorConfig.framebuffer.renderToRAM = false;
+    }
     // Scale LODs based on the output resolution.
     app->enhancementConfig.textureLOD.scale = true;
     // Pick an API if the user has set an override.
@@ -295,6 +303,12 @@ zelda64::renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::rendere
     thread_id = window_handle.thread_id;
 #endif
     setup_result = map_setup_result(app->setup(thread_id));
+
+    // RT64 finds the SDL window for its developer shortcuts (F1 inspector) by assuming SDL window ID 1, which is
+    // not ours. Point it at the real game window so its event filter gets installed.
+    if (app->userConfig.developerMode && (window != nullptr) && (app->appWindow != nullptr)) {
+        app->appWindow->sdlWindow = window;
+    }
     // Get the API that RT64 chose.
     chosen_api = map_graphics_api(app->chosenGraphicsAPI);
     if (setup_result != ultramodern::renderer::SetupResult::Success) {
@@ -410,6 +424,14 @@ void zelda64::renderer::RT64Context::send_dl(const OSTask* task) {
             if (op == 0xB8) {
                 break;
             }
+            if (op == 0xF2 && std::getenv("DARKRIFT_CLAMP_BG_TILES") != nullptr) {
+                // DARKRIFT-TEMP: keep background tiles inside a 512-texel row.
+                const uint32_t lrs = (words[a / 4 + 1] >> 12) & 0xFFF;
+                if (lrs > (511u << 2)) {
+                    skipped.emplace_back(a + 4, words[a / 4 + 1]);
+                    words[a / 4 + 1] = (words[a / 4 + 1] & 0xFF000FFF) | ((511u << 2) << 12);
+                }
+            }
             static const char* skip_ops = std::getenv("DARKRIFT_SKIP_BG_OPS");
             char op_hex[4];
             snprintf(op_hex, sizeof(op_hex), "%02X", op);
@@ -463,17 +485,39 @@ void zelda64::renderer::RT64Context::send_dl(const OSTask* task) {
                     words[b / 4 + 1] = std::atoi(std::getenv("DARKRIFT_HUD_NO_AC"));
                 }
             }
-            if (op == 0x06 && index == 1 && std::getenv("DARKRIFT_HUD_TEX_SWAP") != nullptr) {
-                // DARKRIFT-TEMP: point the HUD's texture and palette loads at the stage background's.
+            if (op == 0x06 && index == 1 && std::getenv("DARKRIFT_HUD_WIDE") != nullptr) {
+                // DARKRIFT-TEMP: stretch every HUD texture rectangle to the full screen width.
                 for (uint32_t b = words[a / 4 + 1] & 0x3FFFF8; ; b += 8) {
+                    const uint32_t w0 = words[b / 4];
+                    if ((w0 >> 24) == 0xB8) break;
+                    if ((w0 >> 24) == 0xE4) {
+                        skipped.emplace_back(b, w0);
+                        skipped.emplace_back(b + 4, words[b / 4 + 1]);
+                        words[b / 4] = (w0 & 0xFF000FFF) | (uint32_t(319 << 2) << 12);
+                        words[b / 4 + 1] = words[b / 4 + 1] & 0xFF000FFF;
+                    }
+                }
+            }
+            if (op == 0x06 && index == 1 && std::getenv("DARKRIFT_HUD_TEX_SWAP") != nullptr) {
+                // DARKRIFT-TEMP: point the HUD's texture and palette loads at the current stage background's
+                // (the first SETTIMG pair found in the main list before this call).
+                uint32_t bg_tlut = 0, bg_tex = 0, bg_tex_w0 = 0;
+                for (uint32_t c = task->t.data_ptr & 0x3FFFF8; c < a; c += 8) {
+                    const uint32_t cw0 = words[c / 4];
+                    if ((cw0 >> 24) == 0xFD) {
+                        if (((cw0 >> 19) & 3) == 2) { if (bg_tlut == 0) bg_tlut = words[c / 4 + 1]; }
+                        else if (bg_tex == 0) { bg_tex = words[c / 4 + 1]; bg_tex_w0 = cw0; }
+                    }
+                }
+                for (uint32_t b = words[a / 4 + 1] & 0x3FFFF8; bg_tlut != 0 && bg_tex != 0; b += 8) {
                     const uint32_t w0 = words[b / 4];
                     if ((w0 >> 24) == 0xB8) break;
                     if ((w0 >> 24) == 0xFD) {
                         skipped.emplace_back(b + 4, words[b / 4 + 1]);
                         skipped.emplace_back(b, w0);
                         const bool tlut = ((w0 >> 19) & 3) == 2;
-                        words[b / 4 + 1] = tlut ? 0x002461E0 : 0x00235FE0;
-                        if (!tlut) words[b / 4] = 0xFD4801FF;
+                        words[b / 4 + 1] = tlut ? bg_tlut : bg_tex;
+                        if (!tlut) words[b / 4] = bg_tex_w0;
                     }
                 }
             }
@@ -488,6 +532,38 @@ void zelda64::renderer::RT64Context::send_dl(const OSTask* task) {
     }
 
     app->interpreter->loadUCodeGBI(task->t.ucode & 0x3FFFFFF, task->t.ucode_data & 0x3FFFFFF, true);
+
+    // DARKRIFT-TEMP (DARKRIFT_HUD_LATE): draw the 2D layer list (the main list's second G_DL, which holds the HUD)
+    // after the rest of the main list instead of before the 3D stage.
+    static const bool hud_late = std::getenv("DARKRIFT_HUD_LATE") != nullptr;
+    if (hud_late) {
+        uint32_t* words = reinterpret_cast<uint32_t*>(app->core.RDRAM);
+        const uint32_t base = task->t.data_ptr & 0x3FFFF8;
+        uint32_t copy_setup = 0, bg_list = 0, dl_index = 0, bg_cmd = 0;
+        for (uint32_t a = base; a < base + task->t.data_size; a += 8) {
+            const uint32_t op = words[a / 4] >> 24;
+            if (op == 0xB8) break;
+            if (op == 0x06) {
+                if (dl_index == 0) copy_setup = words[a / 4 + 1];
+                if (dl_index == 1) { bg_list = words[a / 4 + 1]; bg_cmd = a; }
+                dl_index++;
+            }
+        }
+        if (bg_cmd != 0) {
+            const uint32_t saved0 = words[bg_cmd / 4], saved1 = words[bg_cmd / 4 + 1];
+            words[bg_cmd / 4] = 0; words[bg_cmd / 4 + 1] = 0;
+            constexpr uint32_t wrapper = 0x00BFFE00;
+            uint32_t* w = words + wrapper / 4;
+            w[0] = 0x06000000; w[1] = task->t.data_ptr & 0x3FFFFFF;
+            w[2] = 0x06000000; w[3] = copy_setup;
+            w[4] = 0x06000000; w[5] = bg_list;
+            w[6] = 0xB8000000; w[7] = 0;
+            app->processDisplayLists(app->core.RDRAM, wrapper, 0, true);
+            words[bg_cmd / 4] = saved0; words[bg_cmd / 4 + 1] = saved1;
+            return;
+        }
+    }
+
     app->processDisplayLists(app->core.RDRAM, task->t.data_ptr & 0x3FFFFFF, 0, true);
 
     for (const auto& [a, w] : skipped) {

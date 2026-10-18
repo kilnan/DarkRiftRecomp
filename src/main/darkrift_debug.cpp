@@ -15,6 +15,11 @@
 //   stick <x> <y> <frames>           hold the analog stick (-1..1)
 //   shot <name>                      save a capture of the game window as <name>.png
 //   start_until_battle <frames>      press START once a second until a fight starts (gives up after <frames>)
+//   key <name>                       press and release a keyboard key (SDL scancode name, e.g. F1)
+//   mouse <x> <y>                    move the mouse to window coordinates (points)
+//   click <x> <y> [right]            click at window coordinates
+//   wheel <x> <y> <amount>           scroll the mouse wheel at window coordinates (negative scrolls down)
+//   Keyboard and mouse events are pushed into the game's own SDL queue: no OS permissions, no focus needed.
 //   quit                             exit the game
 // Buttons: A B Z START L R DU DD DL DR CU CD CL CR. Lines starting with # are comments.
 
@@ -38,6 +43,8 @@
 #include "librecomp/game.hpp"
 #include "ultramodern/ultramodern.hpp"
 
+extern SDL_Window* window;
+
 namespace recompui {
     void hide_all_contexts();
 }
@@ -45,7 +52,7 @@ namespace recompui {
 namespace {
 
 struct Step {
-    enum class Kind { Wait, Hold, Stick, Shot, Quit, StartUntilBattle } kind;
+    enum class Kind { Wait, Hold, Stick, Shot, Quit, StartUntilBattle, Key, Mouse, Click, Wheel } kind;
     uint32_t frames = 0;
     uint16_t buttons = 0;
     float x = 0, y = 0;
@@ -146,6 +153,22 @@ void load_script(const char* path) {
         } else if (op == "start_until_battle") {
             s.kind = Step::Kind::StartUntilBattle;
             ss >> s.frames;
+        } else if (op == "key") {
+            s.kind = Step::Kind::Key;
+            ss >> s.name;
+            s.frames = 2;
+        } else if (op == "mouse" || op == "click") {
+            s.kind = (op == "mouse") ? Step::Kind::Mouse : Step::Kind::Click;
+            ss >> s.x >> s.y;
+            std::string button;
+            ss >> button;
+            s.buttons = (button == "right") ? SDL_BUTTON_RIGHT : SDL_BUTTON_LEFT;
+            s.frames = 2;
+        } else if (op == "wheel") {
+            s.kind = Step::Kind::Wheel;
+            ss >> s.x >> s.y >> s.frames;
+            s.buttons = uint16_t(int16_t(s.frames));
+            s.frames = 2;
         } else if (op == "quit") {
             s.kind = Step::Kind::Quit;
         } else {
@@ -155,6 +178,55 @@ void load_script(const char* path) {
         script.push_back(s);
     }
     fprintf(stderr, "[debug] loaded %zu script steps from %s\n", script.size(), path);
+}
+
+// Pushes keyboard/mouse events for the game window into SDL's queue (SDL_PushEvent is thread-safe).
+uint32_t game_window_id() {
+    return window != nullptr ? SDL_GetWindowID(window) : 0;
+}
+
+void push_key(const std::string& name) {
+    const SDL_Scancode scancode = SDL_GetScancodeFromName(name.c_str());
+    if (scancode == SDL_SCANCODE_UNKNOWN) {
+        fprintf(stderr, "[debug] unknown key '%s'\n", name.c_str());
+        return;
+    }
+    for (Uint32 type : { SDL_KEYDOWN, SDL_KEYUP }) {
+        SDL_Event e{};
+        e.type = type;
+        e.key.windowID = game_window_id();
+        e.key.state = (type == SDL_KEYDOWN) ? SDL_PRESSED : SDL_RELEASED;
+        e.key.keysym.scancode = scancode;
+        e.key.keysym.sym = SDL_GetKeyFromScancode(scancode);
+        const int pushed = SDL_PushEvent(&e);
+        SDL_EventFilter filter = nullptr;
+        void* filter_data = nullptr;
+        const bool has_filter = SDL_GetEventFilter(&filter, &filter_data);
+        fprintf(stderr, "[debug] key %s %s: window id %u, pushed %d, event filter %s\n", name.c_str(), type == SDL_KEYDOWN ? "down" : "up",
+                game_window_id(), pushed, has_filter ? "installed" : "none");
+    }
+}
+
+void push_mouse(float x, float y, uint8_t button) {
+    SDL_Event motion{};
+    motion.type = SDL_MOUSEMOTION;
+    motion.motion.windowID = game_window_id();
+    motion.motion.x = int(x);
+    motion.motion.y = int(y);
+    SDL_PushEvent(&motion);
+    if (button != 0) {
+        for (Uint32 type : { SDL_MOUSEBUTTONDOWN, SDL_MOUSEBUTTONUP }) {
+            SDL_Event e{};
+            e.type = type;
+            e.button.windowID = game_window_id();
+            e.button.button = button;
+            e.button.state = (type == SDL_MOUSEBUTTONDOWN) ? SDL_PRESSED : SDL_RELEASED;
+            e.button.clicks = 1;
+            e.button.x = int(x);
+            e.button.y = int(y);
+            SDL_PushEvent(&e);
+        }
+    }
 }
 
 // Runs on the VI thread once per VI.
@@ -179,6 +251,25 @@ void advance_script() {
                 const std::string path = shots_dir + "/" + s.name + ".png";
                 const bool ok = darkrift::debug::capture_window(path);
                 fprintf(stderr, "[debug] vi %llu: shot %s %s\n", (unsigned long long)vi_count.load(), path.c_str(), ok ? "saved" : "FAILED");
+                break;
+            }
+            case Step::Kind::Key:
+                push_key(s.name);
+                break;
+            case Step::Kind::Mouse:
+                push_mouse(s.x, s.y, 0);
+                break;
+            case Step::Kind::Click:
+                push_mouse(s.x, s.y, uint8_t(s.buttons));
+                break;
+            case Step::Kind::Wheel: {
+                push_mouse(s.x, s.y, 0);
+                SDL_Event e{};
+                e.type = SDL_MOUSEWHEEL;
+                e.wheel.windowID = game_window_id();
+                e.wheel.y = int16_t(s.buttons);
+                e.wheel.preciseY = float(int16_t(s.buttons));
+                SDL_PushEvent(&e);
                 break;
             }
             case Step::Kind::Quit:

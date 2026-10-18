@@ -1,0 +1,22 @@
+# Reach a fight, open RT64's inspector (needs DARKRIFT_DEVELOPER=1), pause it and expand the framebuffer pairs.
+wait 600
+start_until_battle 6000
+wait 600
+key F1
+wait 30
+mouse 271 97
+wait 10
+click 271 97
+wait 30
+mouse 89 120
+wait 10
+click 89 120
+wait 30
+mouse 144 485
+wait 10
+click 144 485
+wait 30
+shot i01
+wait 30
+shot i02
+quit

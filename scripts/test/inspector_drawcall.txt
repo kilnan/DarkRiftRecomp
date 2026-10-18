@@ -1,0 +1,56 @@
+# Inspector without Turbo3D: pause the main workload and render up to chosen draw calls.
+wait 600
+start_until_battle 6000
+wait 600
+key F1
+wait 30
+mouse 271 97
+wait 10
+click 271 97
+wait 30
+mouse 89 120
+wait 5
+click 89 120
+wait 30
+shot full
+mouse 118 160
+wait 5
+click 118 160
+wait 20
+shot d0
+mouse 173 160
+wait 5
+click 173 160
+wait 20
+shot d1
+mouse 209 160
+wait 5
+click 209 160
+wait 20
+shot d2
+mouse 220 160
+wait 5
+click 220 160
+wait 20
+shot d3
+mouse 227 160
+wait 5
+click 227 160
+wait 20
+shot d4
+mouse 235 160
+wait 5
+click 235 160
+wait 20
+shot d5
+mouse 240 160
+wait 5
+click 240 160
+wait 20
+shot d6
+mouse 245 160
+wait 5
+click 245 160
+wait 20
+shot d7
+quit

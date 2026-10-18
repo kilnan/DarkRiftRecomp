@@ -1,0 +1,235 @@
+# Inspector: pause on several frames, expand framebuffer pair #1 and scroll down to its draw calls.
+wait 600
+start_until_battle 6000
+wait 600
+key F1
+wait 30
+mouse 271 97
+wait 10
+click 271 97
+wait 30
+mouse 89 120
+wait 5
+click 89 120
+wait 20
+mouse 94 482
+wait 5
+click 94 482
+wait 15
+wheel 150 500 -6
+wait 10
+wheel 150 500 -6
+wait 10
+shot p0a
+wheel 150 500 -6
+wait 10
+wheel 150 500 -6
+wait 10
+shot p0b
+wheel 150 500 30
+wait 10
+mouse 94 482
+wait 5
+click 94 482
+wait 10
+mouse 89 120
+wait 5
+click 89 120
+wait 7
+mouse 89 120
+wait 5
+click 89 120
+wait 20
+mouse 94 482
+wait 5
+click 94 482
+wait 15
+wheel 150 500 -6
+wait 10
+wheel 150 500 -6
+wait 10
+shot p1a
+wheel 150 500 -6
+wait 10
+wheel 150 500 -6
+wait 10
+shot p1b
+wheel 150 500 30
+wait 10
+mouse 94 482
+wait 5
+click 94 482
+wait 10
+mouse 89 120
+wait 5
+click 89 120
+wait 8
+mouse 89 120
+wait 5
+click 89 120
+wait 20
+mouse 94 482
+wait 5
+click 94 482
+wait 15
+wheel 150 500 -6
+wait 10
+wheel 150 500 -6
+wait 10
+shot p2a
+wheel 150 500 -6
+wait 10
+wheel 150 500 -6
+wait 10
+shot p2b
+wheel 150 500 30
+wait 10
+mouse 94 482
+wait 5
+click 94 482
+wait 10
+mouse 89 120
+wait 5
+click 89 120
+wait 9
+mouse 89 120
+wait 5
+click 89 120
+wait 20
+mouse 94 482
+wait 5
+click 94 482
+wait 15
+wheel 150 500 -6
+wait 10
+wheel 150 500 -6
+wait 10
+shot p3a
+wheel 150 500 -6
+wait 10
+wheel 150 500 -6
+wait 10
+shot p3b
+wheel 150 500 30
+wait 10
+mouse 94 482
+wait 5
+click 94 482
+wait 10
+mouse 89 120
+wait 5
+click 89 120
+wait 10
+mouse 89 120
+wait 5
+click 89 120
+wait 20
+mouse 94 482
+wait 5
+click 94 482
+wait 15
+wheel 150 500 -6
+wait 10
+wheel 150 500 -6
+wait 10
+shot p4a
+wheel 150 500 -6
+wait 10
+wheel 150 500 -6
+wait 10
+shot p4b
+wheel 150 500 30
+wait 10
+mouse 94 482
+wait 5
+click 94 482
+wait 10
+mouse 89 120
+wait 5
+click 89 120
+wait 11
+mouse 89 120
+wait 5
+click 89 120
+wait 20
+mouse 94 482
+wait 5
+click 94 482
+wait 15
+wheel 150 500 -6
+wait 10
+wheel 150 500 -6
+wait 10
+shot p5a
+wheel 150 500 -6
+wait 10
+wheel 150 500 -6
+wait 10
+shot p5b
+wheel 150 500 30
+wait 10
+mouse 94 482
+wait 5
+click 94 482
+wait 10
+mouse 89 120
+wait 5
+click 89 120
+wait 12
+mouse 89 120
+wait 5
+click 89 120
+wait 20
+mouse 94 482
+wait 5
+click 94 482
+wait 15
+wheel 150 500 -6
+wait 10
+wheel 150 500 -6
+wait 10
+shot p6a
+wheel 150 500 -6
+wait 10
+wheel 150 500 -6
+wait 10
+shot p6b
+wheel 150 500 30
+wait 10
+mouse 94 482
+wait 5
+click 94 482
+wait 10
+mouse 89 120
+wait 5
+click 89 120
+wait 13
+mouse 89 120
+wait 5
+click 89 120
+wait 20
+mouse 94 482
+wait 5
+click 94 482
+wait 15
+wheel 150 500 -6
+wait 10
+wheel 150 500 -6
+wait 10
+shot p7a
+wheel 150 500 -6
+wait 10
+wheel 150 500 -6
+wait 10
+shot p7b
+wheel 150 500 30
+wait 10
+mouse 94 482
+wait 5
+click 94 482
+wait 10
+mouse 89 120
+wait 5
+click 89 120
+wait 14
+quit
