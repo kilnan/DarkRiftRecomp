@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <filesystem>
 #include <vector>
 #include <unordered_set>
 #include "darkrift_turbo3d.h"
@@ -308,6 +309,13 @@ zelda64::renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::rendere
     thread_id = window_handle.thread_id;
 #endif
     setup_result = map_setup_result(app->setup(thread_id));
+
+    // DARKRIFT_DUMP_TEXTURES=<dir>: dump every texture RT64 sees as <hash>.png (plus raw TMEM), named the way
+    // texture packs reference them.
+    if (const char* dump_dir = std::getenv("DARKRIFT_DUMP_TEXTURES"); dump_dir != nullptr && app != nullptr) {
+        std::filesystem::create_directories(dump_dir);
+        app->state->dumpingTexturesDirectory = dump_dir;
+    }
 
     // RT64 finds the SDL window for its developer shortcuts (F1 inspector) by assuming SDL window ID 1, which is
     // not ours. Point it at the real game window so its event filter gets installed.
