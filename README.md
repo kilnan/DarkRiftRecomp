@@ -11,7 +11,7 @@ The game's MIPS code is translated to C with [N64Recomp](https://github.com/N64R
 Prebuilt builds are on the [Releases](https://github.com/kilnan/DarkRiftRecomp/releases) page (macOS, Apple Silicon).
 
 1. Download `DarkRiftRecompiled-macOS-arm64.zip`, unzip it and move `DarkRiftRecompiled.app` wherever you like.
-2. The app is not signed by a registered Apple developer, so macOS blocks it on first launch. Either right-click it and choose **Open**, or run `xattr -dr com.apple.quarantine DarkRiftRecompiled.app` once.
+2. The app is not signed by a registered Apple developer, so macOS blocks it on first launch. Either open it once, then go to **System Settings → Privacy & Security** and click **Open Anyway**, or run `xattr -dr com.apple.quarantine /path/to/DarkRiftRecompiled.app` once. (Right-click → Open no longer bypasses this on macOS 15 and later.)
 3. In the launcher, select your ROM: **Dark Rift (USA)** in `.z64` format (SHA-1 `3254442626ca2f2ac74400dc1c6a306f5d1b6ceb`). Other regions are not supported.
 
 Saves and settings are stored in `~/Library/Application Support/DarkRiftRecompiled`.
