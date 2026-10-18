@@ -167,10 +167,94 @@ index 3a0de47..b6de442 100644
              descriptorTextureVersions[dynamicView.dstIndex] = 0;
          }
 diff --git a/src/render/rt64_texture_cache.cpp b/src/render/rt64_texture_cache.cpp
-index dfc850d..14a94a0 100644
+index dfc850d..7d88e8b 100644
 --- a/src/render/rt64_texture_cache.cpp
 +++ b/src/render/rt64_texture_cache.cpp
-@@ -998,6 +998,9 @@ namespace RT64 {
+@@ -966,6 +966,83 @@ namespace RT64 {
+         }
+     }
+ 
++    // DARKRIFT-TEMP: CPU port of TextureDecoder.hlsli's sampleTMEM, to rule out the GPU decode path.
++    static void darkriftDecodeTMEM(const uint8_t *tmem, uint32_t width, uint32_t height, uint32_t fmt, uint32_t siz, uint32_t address, uint32_t stride, uint32_t tlut, uint32_t palette, std::vector<uint8_t> &out) {
++        auto load = [&](uint32_t relativeAddress, uint32_t mask, uint32_t orAddress, bool oddRow) -> uint32_t {
++            const uint32_t rowSize = std::max(stride, 1U);
++            const uint32_t rowStart = (relativeAddress / rowSize) * rowSize;
++            const uint32_t wordIndex = (relativeAddress - rowStart) / 4;
++            const uint32_t finalAddress = oddRow ? (address + rowStart + ((wordIndex ^ 1) * 4) + (relativeAddress & 0x3)) : (address + relativeAddress);
++            return tmem[((finalAddress & mask) | orAddress) & 0xFFF];
++        };
++        auto put = [&](uint32_t x, uint32_t y, uint32_t r, uint32_t g, uint32_t b, uint32_t a) {
++            uint8_t *p = &out[(y * width + x) * 4];
++            p[0] = uint8_t(r); p[1] = uint8_t(g); p[2] = uint8_t(b); p[3] = uint8_t(a);
++        };
++        auto rgba16 = [&](uint32_t x, uint32_t y, uint32_t v) {
++            const uint32_t r = (v >> 11) & 0x1F, g = (v >> 6) & 0x1F, b = (v >> 1) & 0x1F;
++            put(x, y, (r << 3) | (r >> 2), (g << 3) | (g >> 2), (b << 3) | (b >> 2), (v & 1) ? 255 : 0);
++        };
++        auto ia16 = [&](uint32_t x, uint32_t y, uint32_t v) { put(x, y, v >> 8, v >> 8, v >> 8, v & 0xFF); };
++        out.assign(size_t(width) * height * 4, 0);
++        const bool isRgba32 = (fmt == G_IM_FMT_RGBA) && (siz == G_IM_SIZ_32b);
++        const bool usesTlut = tlut > 0;
++        const uint32_t tmemShift = isRgba32 ? 2 : siz;
++        const uint32_t addressMask = (isRgba32 || usesTlut) ? 0x7FF : 0xFFF;
++        for (uint32_t y = 0; y < height; y++) {
++            for (uint32_t x = 0; x < width; x++) {
++                const bool oddRow = y & 1, oddColumn = x & 1;
++                const uint32_t pixelAddress = y * stride + ((x << tmemShift) >> 1);
++                const uint32_t v0 = load(pixelAddress + 0, addressMask, 0, oddRow);
++                const uint32_t v1 = load(pixelAddress + 1, addressMask, 0, oddRow);
++                const uint32_t v4 = (v0 >> (oddColumn ? 0 : 4)) & 0xF;
++                if (usesTlut) {
++                    const uint32_t pa = (siz == G_IM_SIZ_4b) ? (0x800 + (palette << 7) + (v4 << 3)) : (0x800 + (v0 << 3));
++                    const uint32_t pv = tmem[(pa + 1) & 0xFFF] | (tmem[pa & 0xFFF] << 8);
++                    if (tlut == G_TT_RGBA16) rgba16(x, y, pv);
++                    else if (tlut == G_TT_IA16) ia16(x, y, pv);
++                    else put(x, y, 0, 0, 0, 255);
++                    continue;
++                }
++                const uint32_t pa2 = isRgba32 ? pixelAddress : pixelAddress + 2;
++                const uint32_t orA = isRgba32 ? 0x800 : 0;
++                const uint32_t v2 = load(pa2 + 0, addressMask, orA, oddRow);
++                const uint32_t v3 = load(pa2 + 1, addressMask, orA, oddRow);
++                switch (siz) {
++                case G_IM_SIZ_4b:
++                    if (fmt == G_IM_FMT_CI) { const uint32_t i = (palette << 4) | v4; put(x, y, i, i, i, i); }
++                    else if (fmt == G_IM_FMT_IA) { uint32_t i = v4 & 0xE; i = (i << 4) | (i << 1) | (i >> 2); put(x, y, i, i, i, (v4 & 1) ? 255 : 0); }
++                    else if (fmt == G_IM_FMT_I || fmt == G_IM_FMT_RGBA) { const uint32_t i = (v4 << 4) | v4; put(x, y, i, i, i, i); }
++                    else put(x, y, 0, 0, 0, 255);
++                    break;
++                case G_IM_SIZ_8b:
++                    if (fmt == G_IM_FMT_IA) { const uint32_t i = ((v0 >> 4) & 0xF) * 0x11, a = (v0 & 0xF) * 0x11; put(x, y, i, i, i, a); }
++                    else if (fmt == G_IM_FMT_I || fmt == G_IM_FMT_RGBA || fmt == G_IM_FMT_CI) put(x, y, v0, v0, v0, v0);
++                    else put(x, y, 0, 0, 0, 255);
++                    break;
++                case G_IM_SIZ_16b: {
++                    const uint32_t v16 = v1 | (v0 << 8);
++                    if (fmt == G_IM_FMT_RGBA) rgba16(x, y, v16);
++                    else if (fmt == G_IM_FMT_IA) ia16(x, y, v16);
++                    else if (fmt == G_IM_FMT_CI || fmt == G_IM_FMT_I) put(x, y, v0, v1, v0, v1);
++                    else put(x, y, 0, 0, 0, 255);
++                    break;
++                }
++                case G_IM_SIZ_32b:
++                    if (fmt == G_IM_FMT_RGBA) put(x, y, v0, v1, v2, v3);
++                    else if (fmt == G_IM_FMT_CI || fmt == G_IM_FMT_IA || fmt == G_IM_FMT_I) {
++                        if (oddColumn) put(x, y, v0, v1, v0, v1); else put(x, y, v2, v3, v2, v3);
++                    }
++                    else put(x, y, 0, 0, 0, 255);
++                    break;
++                default:
++                    put(x, y, 0, 0, 0, 255);
++                    break;
++                }
++            }
++        }
++    }
++
+     void TextureCache::uploadThreadLoop() {
+         Thread::setCurrentThreadName("RT64 Texture");
+ 
+@@ -998,6 +1075,9 @@ namespace RT64 {
  
                  if (!uploadQueue.empty()) {
                      queueCopy = uploadQueue;
@@ -180,7 +264,7 @@ index dfc850d..14a94a0 100644
                  }
  
                  if (!resolvedPathQueue.empty()) {
-@@ -1047,7 +1050,9 @@ namespace RT64 {
+@@ -1047,7 +1127,9 @@ namespace RT64 {
                  {
                      std::unique_lock queueLock(uploadResourcePoolMutex);
                      for (size_t i = tmemUploadResources.size(); i < queueSize; i++) {
@@ -191,7 +275,27 @@ index dfc850d..14a94a0 100644
                      }
                  }
  
-@@ -1181,6 +1186,12 @@ namespace RT64 {
+@@ -1102,7 +1184,18 @@ namespace RT64 {
+ 
+                     beforeDecodeBarriers.emplace_back(dstTexture->tmem.get(), RenderTextureLayout::SHADER_READ);
+ 
+-                    if (upload.decodeTMEM) {
++                    static const bool dr_cpu_decode = getenv("DARKRIFT_CPU_DECODE") != nullptr; // DARKRIFT-TEMP
++                    if (upload.decodeTMEM && dr_cpu_decode) {
++                        std::vector<uint8_t> rgba;
++                        darkriftDecodeTMEM(upload.bytesTMEM.data(), upload.width, upload.height, upload.loadTile.fmt, upload.loadTile.siz,
++                            uint32_t(upload.loadTile.tmem) << 3, uint32_t(upload.loadTile.line) << 3, upload.tlut, upload.loadTile.palette, rgba);
++                        static uint64_t dr_cpu_count = 0;
++                        if ((dr_cpu_count++ % 500) == 0) fprintf(stderr, "[cpudecode] %llu textures, last %ux%u fmt %u siz %u tlut %u\n", (unsigned long long)dr_cpu_count, upload.width, upload.height, upload.loadTile.fmt, upload.loadTile.siz, upload.tlut);
++                        replacementUploadResources.emplace_back();
++                        setRGBA32(dstTexture, copyWorker->device, copyWorker->commandList.get(), rgba.data(), rgba.size(), upload.width, upload.height, upload.width * 4, replacementUploadResources.back(), nullptr, nullptr);
++                        afterDecodeBarriers.emplace_back(RenderTextureBarrier(dstTexture->texture.get(), RenderTextureLayout::SHADER_READ));
++                    }
++                    else if (upload.decodeTMEM) {
+                         static uint32_t TextureGlobalCounter = 0;
+                         TextureDecodeDescriptorSet *descSet = descriptorSets[i].get();
+                         dstTexture->format = RenderFormat::R8G8B8A8_UNORM;
+@@ -1181,6 +1274,12 @@ namespace RT64 {
                  const RenderCommandList *copyCommandList = copyWorker->commandList.get();
                  RenderCommandSemaphore *syncSemaphore = copyToDirectSemaphore.get();
                  copyWorker->commandList->end();
@@ -204,7 +308,20 @@ index dfc850d..14a94a0 100644
                  copyWorker->commandQueue->executeCommandLists(&copyCommandList, 1, nullptr, 0, &syncSemaphore, 1);
                  
                  // Decode all textures using the direct worker and transition all textures to their final layouts.
-@@ -1226,6 +1237,8 @@ namespace RT64 {
+@@ -1188,10 +1287,11 @@ namespace RT64 {
+                 directWorker->commandList->barriers(RenderBarrierStage::GRAPHICS_AND_COMPUTE, beforeDecodeBarriers);
+ 
+                 const ShaderRecord &textureDecode = shaderLibrary->textureDecode;
++                static const bool dr_cpu_decode_dispatch = getenv("DARKRIFT_CPU_DECODE") != nullptr; // DARKRIFT-TEMP
+                 bool pipelineSet = false;
+                 for (size_t i = 0; i < queueSize; i++) {
+                     const TextureUpload &upload = queueCopy[i];
+-                    if (upload.decodeTMEM) {
++                    if (upload.decodeTMEM && !dr_cpu_decode_dispatch) {
+                         if (!pipelineSet) {
+                             directWorker->commandList->setPipeline(textureDecode.pipeline.get());
+                             directWorker->commandList->setComputePipelineLayout(textureDecode.pipelineLayout.get());
+@@ -1226,6 +1326,8 @@ namespace RT64 {
                  // Execute the direct worker but make it wait for the copy worker to finish first.
                  const RenderCommandList *directCommandList = directWorker->commandList.get();
                  directWorker->commandList->end();
