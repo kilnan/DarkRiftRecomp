@@ -166,6 +166,10 @@ void set_application_user_config(RT64::Application* application, const ultramode
     application->userConfig.aspectRatio = to_rt64(config.ar_option);
     application->userConfig.antialiasing = to_rt64(config.msaa_option);
     application->userConfig.refreshRate = to_rt64(config.rr_option);
+    // DARKRIFT-TEMP: DARKRIFT_NO_INTERP=1 forces the original refresh rate (no frame interpolation).
+    if (std::getenv("DARKRIFT_NO_INTERP") != nullptr) {
+        application->userConfig.refreshRate = RT64::UserConfiguration::RefreshRate::Original;
+    }
     application->userConfig.refreshRateTarget = config.rr_manual_value;
     application->userConfig.internalColorFormat = to_rt64(config.hpfb_option);
     application->userConfig.displayBuffering = RT64::UserConfiguration::DisplayBuffering::Triple;
@@ -632,8 +636,10 @@ bool zelda64::renderer::RT64Context::update_config(const ultramodern::renderer::
 }
 
 void zelda64::renderer::RT64Context::enable_instant_present() {
-    // Enable the present early presentation mode for minimal latency.
-    app->enhancementConfig.presentation.mode = RT64::EnhancementConfiguration::Presentation::Mode::PresentEarly;
+    // Dark Rift renders each frame with two RSP tasks (Fast3D for the stage and 2D, then Turbo3D for the
+    // fighters). The "present early" mode can present a frame between the two, so the fighters flicker
+    // out; console presentation waits for the frame to be complete.
+    app->enhancementConfig.presentation.mode = RT64::EnhancementConfiguration::Presentation::Mode::Console;
 
     app->updateEnhancementConfig();
 }
