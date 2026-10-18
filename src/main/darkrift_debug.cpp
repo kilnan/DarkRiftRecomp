@@ -1,0 +1,219 @@
+// Debug/test mode for Dark Rift: Recompiled.
+//
+// Command line options (all optional):
+//   --autostart          skip the launcher and start the game immediately
+//   --script <file>      drive controller 1 from a script (see below)
+//   --shots <dir>        where `shot` saves window captures (default /tmp/darkrift-shots)
+// The game speed can be raised with the DARKRIFT_SPEED environment variable (1-16).
+//
+// Script format, one command per line, executed on the VI clock (60 per game second):
+//   wait <frames>                    do nothing
+//   press <BTN[+BTN...]> [frames]    hold buttons (default 4 frames), then release for 4
+//   hold <BTN[+BTN...]> <frames>     hold buttons without the release gap
+//   stick <x> <y> <frames>           hold the analog stick (-1..1)
+//   shot <name>                      save a capture of the game window as <name>.png
+//   quit                             exit the game
+// Buttons: A B Z START L R DU DD DL DR CU CD CL CR. Lines starting with # are comments.
+
+#include <atomic>
+#include <chrono>
+#include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <mutex>
+#include <sstream>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include "darkrift_debug.h"
+#include "recomp_input.h"
+#include "librecomp/game.hpp"
+#include "ultramodern/ultramodern.hpp"
+
+namespace recompui {
+    void hide_all_contexts();
+}
+
+namespace {
+
+struct Step {
+    enum class Kind { Wait, Hold, Stick, Shot, Quit } kind;
+    uint32_t frames = 0;
+    uint16_t buttons = 0;
+    float x = 0, y = 0;
+    std::string name;
+};
+
+std::vector<Step> script;
+std::string shots_dir = "/tmp/darkrift-shots";
+bool autostart = false;
+
+std::mutex state_mutex;
+size_t step_index = 0;
+uint32_t step_frames_left = 0;
+bool step_started = false;
+uint16_t scripted_buttons = 0;
+float scripted_x = 0, scripted_y = 0;
+std::atomic<uint64_t> vi_count = 0;
+
+uint16_t parse_buttons(const std::string& spec) {
+    static const std::pair<const char*, uint16_t> names[] = {
+        { "A", 0x8000 }, { "B", 0x4000 }, { "Z", 0x2000 }, { "START", 0x1000 },
+        { "DU", 0x0800 }, { "DD", 0x0400 }, { "DL", 0x0200 }, { "DR", 0x0100 },
+        { "L", 0x0020 }, { "R", 0x0010 }, { "CU", 0x0008 }, { "CD", 0x0004 }, { "CL", 0x0002 }, { "CR", 0x0001 },
+    };
+    uint16_t mask = 0;
+    std::stringstream ss(spec);
+    std::string part;
+    while (std::getline(ss, part, '+')) {
+        bool found = false;
+        for (const auto& [n, bit] : names) {
+            if (part == n) {
+                mask |= bit;
+                found = true;
+            }
+        }
+        if (!found) {
+            fprintf(stderr, "[debug] unknown button '%s'\n", part.c_str());
+        }
+    }
+    return mask;
+}
+
+void load_script(const char* path) {
+    std::ifstream in(path);
+    if (!in) {
+        fprintf(stderr, "[debug] cannot open script %s\n", path);
+        return;
+    }
+    std::string line;
+    while (std::getline(in, line)) {
+        std::stringstream ss(line);
+        std::string op;
+        if (!(ss >> op) || op[0] == '#') {
+            continue;
+        }
+        Step s{};
+        if (op == "wait") {
+            s.kind = Step::Kind::Wait;
+            ss >> s.frames;
+        } else if (op == "press" || op == "hold") {
+            std::string btn;
+            ss >> btn;
+            s.kind = Step::Kind::Hold;
+            s.buttons = parse_buttons(btn);
+            s.frames = 4;
+            ss >> s.frames;
+            script.push_back(s);
+            if (op == "press") {
+                script.push_back(Step{ Step::Kind::Wait, 4 });
+            }
+            continue;
+        } else if (op == "stick") {
+            s.kind = Step::Kind::Stick;
+            ss >> s.x >> s.y >> s.frames;
+        } else if (op == "shot") {
+            s.kind = Step::Kind::Shot;
+            ss >> s.name;
+        } else if (op == "quit") {
+            s.kind = Step::Kind::Quit;
+        } else {
+            fprintf(stderr, "[debug] unknown command '%s'\n", op.c_str());
+            continue;
+        }
+        script.push_back(s);
+    }
+    fprintf(stderr, "[debug] loaded %zu script steps from %s\n", script.size(), path);
+}
+
+// Runs on the VI thread once per VI.
+void advance_script() {
+    std::lock_guard lock{ state_mutex };
+    while (step_index < script.size()) {
+        Step& s = script[step_index];
+        if (!step_started) {
+            step_started = true;
+            step_frames_left = s.frames;
+            scripted_buttons = 0;
+            scripted_x = scripted_y = 0;
+            switch (s.kind) {
+            case Step::Kind::Hold:
+                scripted_buttons = s.buttons;
+                break;
+            case Step::Kind::Stick:
+                scripted_x = s.x;
+                scripted_y = s.y;
+                break;
+            case Step::Kind::Shot: {
+                const std::string path = shots_dir + "/" + s.name + ".png";
+                const bool ok = darkrift::debug::capture_window(path);
+                fprintf(stderr, "[debug] vi %llu: shot %s %s\n", (unsigned long long)vi_count.load(), path.c_str(), ok ? "saved" : "FAILED");
+                break;
+            }
+            case Step::Kind::Quit:
+                fprintf(stderr, "[debug] vi %llu: quit\n", (unsigned long long)vi_count.load());
+                ultramodern::quit();
+                break;
+            default:
+                break;
+            }
+        }
+        if (step_frames_left > 0) {
+            step_frames_left--;
+            return;
+        }
+        step_index++;
+        step_started = false;
+        scripted_buttons = 0;
+        scripted_x = scripted_y = 0;
+    }
+}
+
+} // namespace
+
+void darkrift::debug::init(int argc, char** argv) {
+    for (int i = 1; i < argc; i++) {
+        if (std::strcmp(argv[i], "--autostart") == 0) {
+            autostart = true;
+        } else if (std::strcmp(argv[i], "--script") == 0 && i + 1 < argc) {
+            load_script(argv[++i]);
+        } else if (std::strcmp(argv[i], "--shots") == 0 && i + 1 < argc) {
+            shots_dir = argv[++i];
+        }
+    }
+    if (!script.empty()) {
+        std::string cmd = "mkdir -p '" + shots_dir + "'";
+        std::system(cmd.c_str());
+    }
+    if (autostart) {
+        // Wait for the frontend to come up, then start the game as the launcher would.
+        std::thread([] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+            fprintf(stderr, "[debug] autostart\n");
+            recomp::start_game(u8"darkrift.n64.us");
+            recompui::hide_all_contexts();
+        }).detach();
+    }
+}
+
+void darkrift::debug::on_vi() {
+    vi_count++;
+    if (!script.empty() && ultramodern::is_game_started()) {
+        advance_script();
+    }
+    recomp::update_rumble();
+}
+
+bool darkrift::debug::get_input(int controller_num, uint16_t* buttons, float* x, float* y) {
+    if (!script.empty() && controller_num == 0) {
+        std::lock_guard lock{ state_mutex };
+        if (step_index < script.size()) {
+            *buttons = scripted_buttons;
+            *x = scripted_x;
+            *y = scripted_y;
+            return true;
+        }
+    }
+    return recomp::get_n64_input(controller_num, buttons, x, y);
+}

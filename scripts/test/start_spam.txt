@@ -1,0 +1,49 @@
+# Press START every second at the title and capture what happens.
+wait 1500
+shot s00
+press START 10
+wait 50
+shot s01
+press START 10
+wait 50
+shot s02
+press START 10
+wait 50
+shot s03
+press START 10
+wait 50
+shot s04
+press START 10
+wait 50
+shot s05
+press START 10
+wait 50
+shot s06
+press START 10
+wait 50
+shot s07
+press START 10
+wait 50
+shot s08
+press START 10
+wait 50
+shot s09
+press START 10
+wait 50
+shot s10
+press START 10
+wait 50
+shot s11
+press START 10
+wait 50
+shot s12
+press START 10
+wait 50
+shot s13
+press START 10
+wait 50
+shot s14
+press START 10
+wait 50
+shot s15
+quit

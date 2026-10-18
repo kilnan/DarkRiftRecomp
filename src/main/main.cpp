@@ -36,6 +36,7 @@
 #include "zelda_game.h"
 #include "recomp_data.h"
 #include "ovl_patches.hpp"
+#include "darkrift_debug.h"
 #include "librecomp/game.hpp"
 #include "librecomp/mods.hpp"
 #include "librecomp/helpers.hpp"
@@ -573,6 +574,7 @@ void reorder_texture_pack(recomp::mods::ModContext&) {
 #define REGISTER_FUNC(name) recomp::overlays::register_base_export(#name, name)
 
 int main(int argc, char** argv) {
+    darkrift::debug::init(argc, argv);
     (void) argc;
     (void) argv;
     recomp::Version project_version{};
@@ -705,13 +707,13 @@ int main(int argc, char** argv) {
 
     ultramodern::input::callbacks_t input_callbacks{
         .poll_input = recomp::poll_inputs,
-        .get_input = recomp::get_n64_input,
+        .get_input = darkrift::debug::get_input,
         .set_rumble = recomp::set_rumble,
         .get_connected_device_info = recomp::get_connected_device_info,
     };
 
     ultramodern::events::callbacks_t thread_callbacks{
-        .vi_callback = recomp::update_rumble,
+        .vi_callback = darkrift::debug::on_vi,
         .gfx_init_callback = recompui::update_supported_options,
     };
 

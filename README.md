@@ -14,8 +14,21 @@ Work in progress, currently tested on macOS (Apple Silicon) only.
 - [x] Audio microcode recompiled with RSPRecomp
 - [x] Boots and is playable with glitches; stages and UI (Fast3D) render through RT64
 - [x] Fighters render: Dark Rift draws its characters with SGI's *Turbo3D* microcode, which RT64 does not support, so Turbo3D tasks are translated to Fast3D display lists on the fly ([`src/main/turbo3d.cpp`](src/main/turbo3d.cpp))
-- [ ] Graphical glitches remain; Turbo3D objects with pre-transformed vertices (`GT_FLAG_NO_XFM`) are not translated yet
+- [x] Turbo3D screen-space objects (`GT_FLAG_NO_XFM`, used for 2D effects and menu elements) are drawn through a matrix that undoes the viewport transform
+- [ ] Remaining glitches: the areas outside 4:3 are not filled correctly in widescreen
 - [ ] Controls, settings and menus still carry over defaults from the frontend this is based on.
+
+## Debug/test mode
+
+For testing without a controller (and faster than real time):
+
+```bash
+DARKRIFT_SPEED=4 DarkRiftRecompiled.app/Contents/MacOS/DarkRiftRecompiled --autostart --script scripts/test/start_spam.txt
+```
+
+- `--autostart` skips the launcher, `--script` drives controller 1 from a text file (`wait`, `press`, `hold`, `stick`, `shot`, `quit`; see [`src/main/darkrift_debug.cpp`](src/main/darkrift_debug.cpp)) and `shot` saves a capture of the game window (`--shots <dir>`, default `/tmp/darkrift-shots`).
+- `DARKRIFT_SPEED` (1-16) speeds up the VI and CPU timers through a small runtime patch in [`runtime-patches/`](runtime-patches), applied automatically at configure time.
+- `DARKRIFT_NO_T3D=1` disables the Turbo3D translation, to tell which path draws what.
 
 ## Building
 

@@ -1,0 +1,16 @@
+# Reach the title screen, then try START and A.
+wait 1500
+shot t1_title
+press START 8
+wait 120
+shot t2_after_start
+press START 8
+wait 120
+shot t3_after_start2
+press A 8
+wait 120
+shot t4_after_a
+press A 8
+wait 240
+shot t5
+quit

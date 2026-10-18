@@ -1,0 +1,24 @@
+# First look at the boot flow: shots every 5 game seconds, START a few times.
+wait 300
+shot 01_boot
+wait 300
+shot 02
+press START
+wait 300
+shot 03_after_start
+press START
+wait 300
+shot 04
+press START
+wait 300
+shot 05
+press A
+wait 300
+shot 06
+press A
+wait 300
+shot 07
+press A
+wait 600
+shot 08
+quit

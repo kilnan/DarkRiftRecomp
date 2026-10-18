@@ -6,6 +6,22 @@ endif()
 
 project(DarkRiftRecompiled LANGUAGES C CXX)
 
+# Local patches to the N64ModernRuntime submodule (applied once, idempotent).
+file(GLOB RUNTIME_PATCHES ${CMAKE_SOURCE_DIR}/runtime-patches/*.patch)
+foreach(RUNTIME_PATCH ${RUNTIME_PATCHES})
+    execute_process(COMMAND git apply --reverse --check ${RUNTIME_PATCH}
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/lib/N64ModernRuntime
+        RESULT_VARIABLE PATCH_ALREADY_APPLIED OUTPUT_QUIET ERROR_QUIET)
+    if (NOT PATCH_ALREADY_APPLIED EQUAL 0)
+        execute_process(COMMAND git apply ${RUNTIME_PATCH}
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/lib/N64ModernRuntime
+            RESULT_VARIABLE PATCH_RESULT)
+        if (NOT PATCH_RESULT EQUAL 0)
+            message(FATAL_ERROR "Could not apply ${RUNTIME_PATCH}")
+        endif()
+    endif()
+endforeach()
+
 # Xcode 26 libc++ no longer pulls in <cstdlib> transitively; hlsl++ (inside rt64) relies on labs().
 if (APPLE)
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-include$<SEMICOLON>cstdlib>)
@@ -159,6 +175,7 @@ set (SOURCES
     ${CMAKE_SOURCE_DIR}/src/main/register_patches.cpp
     ${CMAKE_SOURCE_DIR}/src/main/rt64_render_context.cpp
     ${CMAKE_SOURCE_DIR}/src/main/turbo3d.cpp
+    ${CMAKE_SOURCE_DIR}/src/main/darkrift_debug.cpp
 
     ${CMAKE_SOURCE_DIR}/src/game/input.cpp
     ${CMAKE_SOURCE_DIR}/src/game/controls.cpp
@@ -209,6 +226,7 @@ set (SOURCES
 
 if (APPLE)
     list(APPEND SOURCES ${CMAKE_SOURCE_DIR}/src/main/support_apple.mm)
+    list(APPEND SOURCES ${CMAKE_SOURCE_DIR}/src/main/darkrift_capture_apple.mm)
 endif()
 
 target_include_directories(DarkRiftRecompiled PRIVATE

@@ -33,6 +33,8 @@ struct Rdram {
 constexpr uint32_t identity_mtx_addr = 0x00BFFF00;
 constexpr uint32_t dl_start = 0x00C00000;
 constexpr uint32_t dl_end = 0x00E00000;
+constexpr uint32_t aux_start = 0x00E00000; // converted vertices and generated matrices
+constexpr uint32_t aux_end = 0x00F00000;
 
 // Fast3D (F3D) opcodes and constants used below.
 constexpr uint32_t G_SPNOOP = 0x00;
@@ -65,6 +67,7 @@ public:
 
     uint32_t run(uint32_t data_ptr, uint32_t data_size) {
         cursor = dl_start;
+        aux_cursor = aux_start;
         write_identity();
         emit(cmd(G_MTX, (G_MTX_MODELVIEW | G_MTX_LOAD) << 16 | 64), identity_mtx_addr);
 
@@ -99,6 +102,10 @@ private:
     std::array<uint32_t, VTX_CACHE> slot_mtx{};
     uint32_t current_mtx = 0;
     uint32_t loaded_mtx = 0;
+    uint32_t aux_cursor = 0;
+    uint32_t viewport = 0;       // address of the current global state's Vp
+    uint32_t screen_mtx = 0;     // matrix mapping screen coordinates back to clip space
+    uint32_t screen_mtx_vp = 0;  // viewport it was built for
 
     static uint32_t cmd(uint32_t op, uint32_t low) { return (op << 24) | (low & 0xFFFFFF); }
     static uint32_t phys(uint32_t addr) { return addr & 0x00FFFFFF; }
@@ -139,13 +146,81 @@ private:
         }
     }
 
+
+    uint32_t aux_alloc(uint32_t size) {
+        if (aux_cursor + size > aux_end) {
+            overflow = true;
+            return 0;
+        }
+        const uint32_t addr = aux_cursor;
+        aux_cursor += size;
+        return addr;
+    }
+
+    // Writes a libultra Mtx (s15.16 fixed point, integer parts then fractions).
+    void write_mtx(uint32_t addr, const double (&m)[4][4]) {
+        int32_t fixed[16];
+        for (int i = 0; i < 16; i++) {
+            fixed[i] = int32_t(m[i / 4][i % 4] * 65536.0 + (m[i / 4][i % 4] >= 0 ? 0.5 : -0.5));
+        }
+        for (int k = 0; k < 8; k++) {
+            const uint32_t a = uint32_t(fixed[2 * k]), b = uint32_t(fixed[2 * k + 1]);
+            mem.put_u32(addr + k * 4, (a & 0xFFFF0000) | (b >> 16));
+            mem.put_u32(addr + 32 + k * 4, (a << 16) | (b & 0xFFFF));
+        }
+    }
+
+    // Matrix for GT_FLAG_NO_XFM vertices: maps screen coordinates (quarter pixels, as in
+    // gtVtxOut) back to clip space so that the viewport transform lands them exactly where
+    // they were. W is set to vscale.x so the coefficients stay (nearly) integral.
+    uint32_t screen_space_mtx() {
+        if (screen_mtx != 0 && screen_mtx_vp == viewport) {
+            return screen_mtx;
+        }
+        if (viewport == 0) {
+            return 0;
+        }
+        const double vsx = int16_t(mem.u16(viewport + 0)), vsy = int16_t(mem.u16(viewport + 2)), vsz = int16_t(mem.u16(viewport + 4));
+        const double vtx = int16_t(mem.u16(viewport + 8)), vty = int16_t(mem.u16(viewport + 10)), vtz = int16_t(mem.u16(viewport + 12));
+        if (vsx == 0 || vsy == 0 || vsz == 0) {
+            return 0;
+        }
+        const double ky = vsx / vsy, kz = vsx / vsz;
+        const double m[4][4] = {
+            { 1, 0, 0, 0 },
+            { 0, -ky, 0, 0 },
+            { 0, 0, kz, 0 },
+            { -vtx, vty * ky, -vtz * kz, vsx },
+        };
+        screen_mtx = aux_alloc(64);
+        if (screen_mtx != 0) {
+            write_mtx(screen_mtx, m);
+            screen_mtx_vp = viewport;
+        }
+        return screen_mtx;
+    }
+
+    // Converts one gtVtxOut (x, y in s10.2, z in s15.16, s/t, rgba) into a Vtx.
+    void convert_screen_vtx(uint32_t src, uint32_t dst) {
+        const uint32_t xy = mem.u32(src);
+        int32_t z = int32_t(mem.u32(src + 4)) >> 16;
+        z = z < -32768 ? -32768 : (z > 32767 ? 32767 : z);
+        mem.put_u32(dst + 0, xy);
+        mem.put_u32(dst + 4, uint32_t(z) << 16);
+        mem.put_u32(dst + 8, mem.u32(src + 8));
+        mem.put_u32(dst + 12, mem.u32(src + 12));
+    }
+
     void global_state(uint32_t g) {
         for (uint32_t seg = 1; seg < 16; seg++) {
-            segments[seg] = mem.u32(g + GLOB_SEGBASES + seg * 4);
+            // The microcode only uses the low 24 bits of a segment base; the game stores some
+            // bases as KSEG0 addresses (e.g. segment 1 = the current framebuffer).
+            segments[seg] = phys(mem.u32(g + GLOB_SEGBASES + seg * 4));
             emit(cmd(G_MOVEWORD, (seg * 4) << 8 | G_MW_SEGMENT), segments[seg]);
         }
         emit(cmd(G_MOVEWORD, G_MW_PERSPNORM), mem.u16(g + GLOB_PERSPNORM));
         emit(cmd(G_MOVEMEM, G_MV_VIEWPORT << 16 | 16), g + GLOB_VIEWPORT);
+        viewport = g + GLOB_VIEWPORT;
         emit(mem.u32(g + GLOB_OTHERMODE), mem.u32(g + GLOB_OTHERMODE + 4));
         if (const uint32_t rdp = mem.u32(g + GLOB_RDPCMDS)) {
             copy_rdp_block(resolve(rdp));
@@ -154,14 +229,15 @@ private:
 
     void object(uint32_t s, uint32_t vtxp, uint32_t trip) {
         const uint8_t flag = mem.u8(s + STATE_FLAG);
-        if (flag & (GT_FLAG_NO_XFM | GT_FLAG_XFM_ONLY)) {
+        if (flag & GT_FLAG_XFM_ONLY) {
             static bool warned = false;
             if (!warned) {
-                fprintf(stderr, "[darkrift] Turbo3D object with flags 0x%02X not supported yet, skipped\n", flag);
+                fprintf(stderr, "[darkrift] Turbo3D XFM_ONLY object not supported yet, skipped\n");
                 warned = true;
             }
             return;
         }
+        const bool screen_space = (flag & GT_FLAG_NO_XFM) != 0;
 
         // Render and texture state.
         const uint32_t render = mem.u32(s + STATE_RENDER);
@@ -174,14 +250,29 @@ private:
             copy_rdp_block(resolve(rdp));
         }
 
-        if (!(flag & GT_FLAG_NOMTX)) {
+        if (!(flag & GT_FLAG_NOMTX) && !screen_space) {
             current_mtx = s + STATE_TRANSFORM;
         }
 
         // Load this object's vertices into the emulated 64-entry cache.
         const uint32_t vtx_count = mem.u8(s + STATE_VTXCOUNT);
         const uint32_t vtx_v0 = mem.u8(s + STATE_VTXV0);
-        if (vtxp != 0) {
+        if (vtxp != 0 && screen_space) {
+            // Pre-transformed points: convert them to Vtx and draw them through a matrix
+            // that undoes the viewport transform.
+            const uint32_t src = resolve(vtxp);
+            const uint32_t mtx = screen_space_mtx();
+            for (uint32_t i = 0; i < vtx_count && vtx_v0 + i < VTX_CACHE && mtx != 0; i++) {
+                const uint32_t dst = aux_alloc(VTX_SIZE);
+                if (dst == 0) {
+                    break;
+                }
+                convert_screen_vtx(src + i * VTX_SIZE, dst);
+                slot_vtx[vtx_v0 + i] = dst;
+                slot_mtx[vtx_v0 + i] = mtx;
+            }
+        }
+        else if (vtxp != 0) {
             const uint32_t src = resolve(vtxp);
             for (uint32_t i = 0; i < vtx_count && vtx_v0 + i < VTX_CACHE; i++) {
                 slot_vtx[vtx_v0 + i] = src + i * VTX_SIZE;

@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <unordered_set>
 #include "darkrift_turbo3d.h"
 #include <memory>
@@ -340,6 +341,10 @@ void zelda64::renderer::RT64Context::send_dl(const OSTask* task) {
     // RT64 has no Turbo3D (gspDarkRift3D) support: translate the task's object list into a
     // Fast3D display list and render it with the game's Fast3D microcode instead.
     if (ucode == darkrift_turbo3d_text) {
+        static const bool t3d_disabled = std::getenv("DARKRIFT_NO_T3D") != nullptr;
+        if (t3d_disabled) {
+            return;
+        }
         const uint32_t dl = darkrift::translate_turbo3d(app->core.RDRAM, task->t.data_ptr & 0x3FFFFFF, task->t.data_size);
         app->interpreter->loadUCodeGBI(darkrift_fast3d_text, darkrift_fast3d_data, true);
         app->processDisplayLists(app->core.RDRAM, dl, 0, true);
