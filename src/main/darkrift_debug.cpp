@@ -15,6 +15,7 @@
 //   stick <x> <y> <frames>           hold the analog stick (-1..1)
 //   shot <name>                      save a capture of the game window as <name>.png
 //   start_until_battle <frames>      press START once a second until a fight starts (gives up after <frames>)
+//   start_until_mode <mode> <frames> press START once a second until gCurrentGameMode == <mode> (5 = character select)
 //   key <name>                       press and release a keyboard key (SDL scancode name, e.g. F1)
 //   mouse <x> <y>                    move the mouse to window coordinates (points)
 //   click <x> <y> [right]            click at window coordinates
@@ -152,7 +153,11 @@ void load_script(const char* path) {
             ss >> s.name;
         } else if (op == "start_until_battle") {
             s.kind = Step::Kind::StartUntilBattle;
+            s.buttons = 0xFFFF;
             ss >> s.frames;
+        } else if (op == "start_until_mode") {
+            s.kind = Step::Kind::StartUntilBattle;
+            ss >> s.buttons >> s.frames;
         } else if (op == "key") {
             s.kind = Step::Kind::Key;
             ss >> s.name;
@@ -281,7 +286,8 @@ void advance_script() {
             }
         }
         if (s.kind == Step::Kind::StartUntilBattle) {
-            if (in_battle() || step_frames_left == 0) {
+            const bool reached = (s.buttons == 0xFFFF) ? in_battle() : (game_mode() == int(s.buttons));
+            if (reached || step_frames_left == 0) {
                 fprintf(stderr, "[debug] vi %llu: start_until_battle done, mode %d\n", (unsigned long long)vi_count.load(), game_mode());
             } else {
                 // Hold START for 5 frames out of every 60.
