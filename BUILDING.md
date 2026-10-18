@@ -60,3 +60,22 @@ cmake --build build-cmake --target DarkRiftRecompiled
 ```
 
 The app is `build-cmake/DarkRiftRecompiled.app`. On first launch, select your ROM in the launcher.
+
+## Portable release bundle (macOS)
+
+Homebrew's libraries only run on the macOS version they were built for, and its `sdl2` is sdl2-compat on top of SDL3. For a bundle that runs on older macOS versions, build SDL2 and FreeType from source first:
+
+```bash
+scripts/build_macos_deps.sh            # installs into deps-macos/
+cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+    -DPATCHES_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang \
+    -DPATCHES_LD=/opt/homebrew/opt/lld/bin/ld.lld \
+    -DCMAKE_PREFIX_PATH=$PWD/deps-macos -DSDL2_DIR=$PWD/deps-macos/lib/cmake/SDL2 \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+cmake --build build-release --target DarkRiftRecompiled
+ditto -c -k --keepParent build-release/DarkRiftRecompiled.app DarkRiftRecompiled-macOS-arm64.zip
+```
+
+Check that nothing in the bundle points to `/opt/homebrew` (`otool -L` on the executable and on `Contents/Frameworks/*`), and that `Contents/Frameworks` has both `libSDL2-2.0.0.dylib` and `libSDL3.dylib` and `Contents/Resources` has `assets`. After a clean build the first link sometimes stops before the bundle post-build steps finish; building again completes them.
+

@@ -87,3 +87,5 @@ syms/
 build-cmake/
 tools/
 rsp/*.cpp
+deps-macos/
+build-release/
