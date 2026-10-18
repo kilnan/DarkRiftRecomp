@@ -1,0 +1,32 @@
+wait 1500
+press START 10
+wait 50
+shot m01
+press START 10
+wait 50
+shot m02
+press START 10
+wait 50
+shot m03
+press START 10
+wait 50
+shot m04
+press START 10
+wait 50
+shot m05
+press START 10
+wait 50
+shot m06
+press START 10
+wait 50
+shot m07
+press START 10
+wait 50
+shot m08
+press START 10
+wait 50
+shot m09
+press START 10
+wait 50
+shot m10
+quit

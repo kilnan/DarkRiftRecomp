@@ -1,0 +1,215 @@
+diff --git a/src/hle/rt64_rdp.cpp b/src/hle/rt64_rdp.cpp
+index 3c8d9b8..792b955 100644
+--- a/src/hle/rt64_rdp.cpp
++++ b/src/hle/rt64_rdp.cpp
+@@ -1,3 +1,4 @@
++#include <set>
+ //
+ // RT64
+ //
+@@ -251,6 +252,14 @@ namespace RT64 {
+         // Make sure the new color image is actually different. Some games will set the color image
+         // multiple times despite setting the exact same parameters.
+         const uint32_t newAddress = maskAddress(address);
++        // DARKRIFT-TEMP
++        {
++            static std::set<uint64_t> dr_seen;
++            const uint64_t key = (uint64_t(newAddress) << 16) | (uint64_t(fmt) << 12) | (uint64_t(siz) << 10) | width;
++            if (getenv("DARKRIFT_LOG_TEXRECT") && dr_seen.insert(key).second) {
++                fprintf(stderr, "[colorimg] %06X fmt %u siz %u width %u\n", newAddress, fmt, siz, width);
++            }
++        }
+         if ((colorImage.fmt != fmt) ||
+             (colorImage.siz != siz) ||
+             (colorImage.width != width) ||
+@@ -1307,6 +1316,15 @@ namespace RT64 {
+             state->updateDrawStatusAttribute(DrawAttribute::Texture);
+         }
+         
++        // DARKRIFT-TEMP
++        {
++            static const bool dr_log = getenv("DARKRIFT_LOG_TEXRECT") != nullptr;
++            static uint64_t dr_count = 0;
++            if (dr_log && (dr_count++ % 4000) < 400) {
++                fprintf(stderr, "[texrect] %d,%d-%d,%d tile %u cyc %u colorimg %06X blendA %.4f L %08X H %08X tlut %u\n", ulx / 4, uly / 4, lrx / 4, lry / 4, tile, otherMode.cycleType(), colorImage.address, (float)blendColorStack[blendColorStackSize - 1].w, otherMode.L, otherMode.H, otherMode.textLUT());
++                fprintf(stderr, "   tmem pal %016llX %016llX %016llX tex %016llX %016llX tile0 fmt %u siz %u line %u tmem %u pal %u\n", (unsigned long long)TMEM[256], (unsigned long long)TMEM[257], (unsigned long long)TMEM[258], (unsigned long long)TMEM[0], (unsigned long long)TMEM[1], tiles[0].fmt, tiles[0].siz, tiles[0].line, tiles[0].tmem, tiles[0].palette);
++            }
++        }
+         // Divide dsdx by 4 and add an extra pixel to the edges if it uses copy mode.
+         const bool usesCopyMode = (otherMode.cycleType() == G_CYC_COPY);
+         if (usesCopyMode) {
+diff --git a/src/hle/rt64_rdp_tmem.cpp b/src/hle/rt64_rdp_tmem.cpp
+index 6051f4e..b06617e 100644
+--- a/src/hle/rt64_rdp_tmem.cpp
++++ b/src/hle/rt64_rdp_tmem.cpp
+@@ -6,6 +6,9 @@
+ 
+ #include <cassert>
+ #include <cinttypes>
++#include <set>
++#include <cstdio>
++#include <cstdlib>
+ 
+ #include "xxHash/xxh3.h"
+ 
+@@ -52,6 +55,15 @@ namespace RT64 {
+     uint64_t TextureManager::uploadTexture(State *state, const LoadTile &loadTile, TextureCache *textureCache, uint64_t creationFrame, uint16_t width, uint16_t height, uint32_t tlut) {
+         const uint8_t *TMEM = reinterpret_cast<const uint8_t *>(state->rdp->TMEM);
+         uint64_t hash = TMEMHasher::hash(TMEM, loadTile, width, height, tlut, TMEMHasher::CurrentHashVersion);
++        // DARKRIFT-TEMP: dump the TMEM of chosen texture sizes.
++        if (getenv("DARKRIFT_DUMP_TMEM") && width == 89 && height == 16) {
++            static std::set<uint64_t> dr_dumped;
++            if (dr_dumped.insert(hash).second) {
++                char path[256];
++                snprintf(path, sizeof(path), "/tmp/drtmem_%016llx_l%u_t%u_u%u_v%u.bin", (unsigned long long)hash, loadTile.line, loadTile.tmem, loadTile.uls, loadTile.ult);
++                if (FILE *f = fopen(path, "wb")) { fwrite(TMEM, 1, RDP_TMEM_BYTES, f); fclose(f); }
++            }
++        }
+         if (hashSet.find(hash) == hashSet.end()) {
+             hashSet.insert(hash);
+             textureCache->queueGPUUploadTMEM(hash, creationFrame, TMEM, RDP_TMEM_BYTES, width, height, tlut, loadTile, true);
+diff --git a/src/hle/rt64_state.cpp b/src/hle/rt64_state.cpp
+index 990bbba..6ccdee6 100644
+--- a/src/hle/rt64_state.cpp
++++ b/src/hle/rt64_state.cpp
+@@ -291,6 +291,8 @@ namespace RT64 {
+                     // Check if we need to use raw TMEM decoding because the tile can sample more bytes than TMEM actually allows.
+                     assert((dstCallTile.sampleWidth > 0) && (dstCallTile.sampleHeight > 0) && "Sample size calculation can only result in non-zero values.");
+                     dstCallTile.rawTMEM = TMEMHasher::requiresRawTMEM(tile, dstCallTile.sampleWidth, dstCallTile.sampleHeight);
++                    static const bool dr_raw = getenv("DARKRIFT_RAW_TMEM") != nullptr; // DARKRIFT-TEMP
++                    if (dr_raw) dstCallTile.rawTMEM = true;
+                     
+                     auto &dstRDPTile = drawData.rdpTiles[drawCall.tileIndex + t];
+                     dstRDPTile.fmt = tile.fmt;
+@@ -648,6 +650,11 @@ namespace RT64 {
+                 }
+                 else {
+                     callTile.tmemHashOrID = textureManager.uploadTexture(this, callTile.loadTile, ext.textureCache, workload.submissionFrame, callTile.sampleWidth, callTile.sampleHeight, callTile.tlut);
++                    // DARKRIFT-TEMP
++                    if (getenv("DARKRIFT_LOG_TEXRECT") && drawCall.rect.ulx == 32 * 4 && drawCall.rect.uly == 26 * 4) {
++                        static uint64_t dr_n = 0;
++                        if ((dr_n++ % 20) == 0) fprintf(stderr, "[hudtex] %016llX sw %u sh %u\n", (unsigned long long)callTile.tmemHashOrID, callTile.sampleWidth, callTile.sampleHeight);
++                    }
+                 }
+             }
+             else if (callTile.reinterpretTile) {
+@@ -1078,6 +1085,23 @@ namespace RT64 {
+                     renderParams.omH = shaderDesc.otherMode.H;
+                     renderParams.flags = shaderDesc.flags;
+ 
++                    // DARKRIFT-TEMP
++                    if (getenv("DARKRIFT_LOG_TEXRECT") && (callDesc.otherMode.cycleType() == G_CYC_COPY)) {
++                        static uint64_t dr_n = 0;
++                        if ((dr_n++ % 4000) < 300) {
++                            const auto &ct = workload.drawData.callTiles[callDesc.tileIndex];
++                            {
++                                const interop::RDPTile &rt = workload.drawData.rdpTiles[callDesc.tileIndex];
++                                if ((callDesc.rect.ulx / 4 == 32 && callDesc.rect.uly / 4 == 26) || (callDesc.rect.ulx / 4 == 5 && callDesc.rect.uly / 4 == 3)) {
++                                    fprintf(stderr, "[rdptile] rect %d,%d fmt %d siz %d stride %d addr %d pal %d masks %d maskt %d shift %.2f,%.2f ul %.2f,%.2f lr %.2f,%.2f cm %d,%d ns %u\n",
++                                        callDesc.rect.ulx / 4, callDesc.rect.uly / 4, rt.fmt, rt.siz, rt.stride, rt.address, rt.palette, rt.masks, rt.maskt, rt.shifts, rt.shiftt, rt.uls, rt.ult, rt.lrs, rt.lrt, rt.cms, rt.cmt, rt.nativeSampler);
++                                }
++                            }
++                            fprintf(stderr, "[call] rect %d,%d hash %016llX sw %u sh %u lw %u tlut %u tc %d,%d-%d,%d copy %u reint %u raw %u valid %u tile uls %u lrs %u ult %u lrt %u line %u tmem %u\n", callDesc.rect.ulx / 4, callDesc.rect.uly / 4,
++                                (unsigned long long)ct.tmemHashOrID, ct.sampleWidth, ct.sampleHeight, ct.lineWidth, ct.tlut, ct.minTexcoord.x, ct.minTexcoord.y, ct.maxTexcoord.x, ct.maxTexcoord.y,
++                                ct.tileCopyUsed, ct.reinterpretTile, ct.rawTMEM, ct.valid, ct.loadTile.uls, ct.loadTile.lrs, ct.loadTile.ult, ct.loadTile.lrt, ct.loadTile.line, ct.loadTile.tmem);
++                        }
++                    }
+                     workload.drawData.rdpParams.emplace_back(gameCall.callDesc.rdpParams);
+                     workload.drawData.renderParams.emplace_back(renderParams);
+                 }
+diff --git a/src/hle/rt64_workload_queue.h b/src/hle/rt64_workload_queue.h
+index f372b07..ff7b0e8 100644
+--- a/src/hle/rt64_workload_queue.h
++++ b/src/hle/rt64_workload_queue.h
+@@ -81,7 +81,7 @@ namespace RT64 {
+         std::mutex threadMutex;
+         std::atomic<bool> threadsRunning = false;
+         std::atomic<bool> rtEnabled = false;
+-        std::atomic<bool> ubershadersOnly = false;
++        std::atomic<bool> ubershadersOnly = (getenv("DARKRIFT_UBER") != nullptr); // DARKRIFT-TEMP
+         std::atomic<bool> ubershadersVisible = false;
+         std::unique_ptr<FramebufferRenderer> framebufferRenderer;
+         std::unique_ptr<RenderFramebufferManager> renderFramebufferManager;
+diff --git a/src/render/rt64_framebuffer_renderer.cpp b/src/render/rt64_framebuffer_renderer.cpp
+index 3a0de47..b6de442 100644
+--- a/src/render/rt64_framebuffer_renderer.cpp
++++ b/src/render/rt64_framebuffer_renderer.cpp
+@@ -277,7 +277,17 @@ namespace RT64 {
+                 bool textureReplaced = false;
+                 bool hasMipmaps = false;
+                 bool shiftedByHalf = false;
+-                textureCache->useTexture(callTile.tmemHashOrID, submissionFrame, textureIndex, gpuTile.tcScale, gpuTile.textureDimensions, textureReplaced, hasMipmaps, shiftedByHalf);
++                const bool dr_found = textureCache->useTexture(callTile.tmemHashOrID, submissionFrame, textureIndex, gpuTile.tcScale, gpuTile.textureDimensions, textureReplaced, hasMipmaps, shiftedByHalf);
++                // DARKRIFT-TEMP
++                if (getenv("DARKRIFT_LOG_TEXRECT")) {
++                    static uint64_t dr_hits = 0, dr_miss = 0;
++                    (dr_found ? dr_hits : dr_miss)++;
++                    if (!dr_found && (dr_miss % 50) == 1) fprintf(stderr, "[texmiss] %016llX misses %llu hits %llu\n", (unsigned long long)callTile.tmemHashOrID, (unsigned long long)dr_miss, (unsigned long long)dr_hits);
++                    static uint32_t dr_max = 0;
++                    if (textureIndex > dr_max) { dr_max = textureIndex; if ((dr_max % 256) == 0) fprintf(stderr, "[texidx] max %u\n", dr_max); }
++                    static uint64_t dr_hud = 0;
++                    if (callTile.tmemHashOrID == 0x5E1EEEB6D31F5157ULL && (dr_hud++ % 30) == 0) fprintf(stderr, "[texidx] hud index %u dims %.0fx%.0f max %u\n", textureIndex, gpuTile.textureDimensions.x, gpuTile.textureDimensions.y, dr_max);
++                }
+ 
+                 // Describe the GPU tile for a regular texture.
+                 gpuTile.ulScale.x = gpuTile.tcScale.x;
+@@ -428,6 +438,12 @@ namespace RT64 {
+         }
+ 
+         for (const DynamicTextureView &dynamicView : dynamicTextureViewVector) {
++            // DARKRIFT-TEMP
++            if (getenv("DARKRIFT_LOG_TEXRECT")) {
++                static uint64_t dr_n = 0;
++                if ((dr_n++ % 200) == 0) fprintf(stderr, "[dynview] count %zu dst %u cacheSize %u\n", dynamicTextureViewVector.size(), dynamicView.dstIndex, textureCacheSize);
++                if (dynamicView.dstIndex == 73) fprintf(stderr, "[dynview] HUD SLOT 73 OVERWRITTEN\n");
++            }
+             descTextureSet->setTexture(dynamicView.dstIndex, dynamicView.texture, RenderTextureLayout::SHADER_READ, dynamicView.textureView);
+             descriptorTextureVersions[dynamicView.dstIndex] = 0;
+         }
+diff --git a/src/render/rt64_texture_cache.cpp b/src/render/rt64_texture_cache.cpp
+index dfc850d..14a94a0 100644
+--- a/src/render/rt64_texture_cache.cpp
++++ b/src/render/rt64_texture_cache.cpp
+@@ -998,6 +998,9 @@ namespace RT64 {
+ 
+                 if (!uploadQueue.empty()) {
+                     queueCopy = uploadQueue;
++                    // DARKRIFT-TEMP: cap the batch size.
++                    static const long dr_cap = getenv("DARKRIFT_TEX_BATCH") ? atol(getenv("DARKRIFT_TEX_BATCH")) : 0;
++                    if (dr_cap > 0 && (long)queueCopy.size() > dr_cap) queueCopy.resize(dr_cap);
+                 }
+ 
+                 if (!resolvedPathQueue.empty()) {
+@@ -1047,7 +1050,9 @@ namespace RT64 {
+                 {
+                     std::unique_lock queueLock(uploadResourcePoolMutex);
+                     for (size_t i = tmemUploadResources.size(); i < queueSize; i++) {
+-                        tmemUploadResources.emplace_back(uploadResourcePool->createBuffer(RenderBufferDesc::UploadBuffer(TMEMSize)));
++                        static const bool dr_nopool = getenv("DARKRIFT_TMEM_NOPOOL") != nullptr; // DARKRIFT-TEMP
++                        if (dr_nopool) tmemUploadResources.emplace_back(copyWorker->device->createBuffer(RenderBufferDesc::UploadBuffer(TMEMSize)));
++                        else tmemUploadResources.emplace_back(uploadResourcePool->createBuffer(RenderBufferDesc::UploadBuffer(TMEMSize)));
+                     }
+                 }
+ 
+@@ -1181,6 +1186,12 @@ namespace RT64 {
+                 const RenderCommandList *copyCommandList = copyWorker->commandList.get();
+                 RenderCommandSemaphore *syncSemaphore = copyToDirectSemaphore.get();
+                 copyWorker->commandList->end();
++                static const bool dr_cpu_sync = getenv("DARKRIFT_COPY_SYNC") != nullptr; // DARKRIFT-TEMP
++                if (dr_cpu_sync) {
++                    copyWorker->commandQueue->executeCommandLists(&copyCommandList, 1, nullptr, 0, nullptr, 0, copyWorker->commandFence.get());
++                    copyWorker->wait();
++                }
++                else
+                 copyWorker->commandQueue->executeCommandLists(&copyCommandList, 1, nullptr, 0, &syncSemaphore, 1);
+                 
+                 // Decode all textures using the direct worker and transition all textures to their final layouts.
+@@ -1226,6 +1237,8 @@ namespace RT64 {
+                 // Execute the direct worker but make it wait for the copy worker to finish first.
+                 const RenderCommandList *directCommandList = directWorker->commandList.get();
+                 directWorker->commandList->end();
++                if (dr_cpu_sync) directWorker->commandQueue->executeCommandLists(&directCommandList, 1, nullptr, 0, nullptr, 0, directWorker->commandFence.get());
++                else
+                 directWorker->commandQueue->executeCommandLists(&directCommandList, 1, &syncSemaphore, 1, nullptr, 0, directWorker->commandFence.get());
+                 directWorker->wait();
+ 

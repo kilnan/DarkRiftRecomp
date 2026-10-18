@@ -238,6 +238,17 @@ private:
             return;
         }
         const bool screen_space = (flag & GT_FLAG_NO_XFM) != 0;
+        if (screen_space) {
+            static int reported = 0;
+            if (reported < 6) {
+                reported++;
+                fprintf(stderr, "[t3d] NO_XFM object: vtxp=%08X trip=%08X vtx=%u v0=%u tris=%u viewport=%06X vp=(%d,%d,%d | %d,%d,%d)\n",
+                        vtxp, trip, mem.u8(s + STATE_VTXCOUNT), mem.u8(s + STATE_VTXV0), mem.u8(s + STATE_TRICOUNT), viewport,
+                        viewport ? int16_t(mem.u16(viewport)) : 0, viewport ? int16_t(mem.u16(viewport + 2)) : 0,
+                        viewport ? int16_t(mem.u16(viewport + 4)) : 0, viewport ? int16_t(mem.u16(viewport + 8)) : 0,
+                        viewport ? int16_t(mem.u16(viewport + 10)) : 0, viewport ? int16_t(mem.u16(viewport + 12)) : 0);
+            }
+        }
 
         // Render and texture state.
         const uint32_t render = mem.u32(s + STATE_RENDER);

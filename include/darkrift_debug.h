@@ -13,6 +13,8 @@ namespace darkrift::debug {
     bool get_input(int controller_num, uint16_t* buttons, float* x, float* y);
     // Saves a PNG capture of the game window (implemented per platform).
     bool capture_window(const std::string& path);
+    // Stops macOS from offering to restore windows after a crash (no-op elsewhere).
+    void disable_window_restoration();
 }
 
 #endif

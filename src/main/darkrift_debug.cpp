@@ -4,6 +4,8 @@
 //   --autostart          skip the launcher and start the game immediately
 //   --script <file>      drive controller 1 from a script (see below)
 //   --shots <dir>        where `shot` saves window captures (default /tmp/darkrift-shots)
+//   --background         run as a background app (no Dock icon, does not take focus)
+//   --mute               no audio output
 // The game speed can be raised with the DARKRIFT_SPEED environment variable (1-16).
 //
 // Script format, one command per line, executed on the VI clock (60 per game second):
@@ -16,6 +18,9 @@
 // Buttons: A B Z START L R DU DD DL DR CU CD CL CR. Lines starting with # are comments.
 
 #include <atomic>
+#include <csignal>
+#include <execinfo.h>
+#include <unistd.h>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -27,6 +32,7 @@
 #include <vector>
 
 #include "darkrift_debug.h"
+#include "SDL.h"
 #include "recomp_input.h"
 #include "librecomp/game.hpp"
 #include "ultramodern/ultramodern.hpp"
@@ -170,9 +176,26 @@ void advance_script() {
     }
 }
 
+// Prints the faulting thread's stack to stderr, so crashes during scripted runs leave a trace in the log.
+void crash_handler(int sig) {
+    void* frames[64];
+    const int count = backtrace(frames, 64);
+    const char header[] = "[debug] fatal signal, backtrace:\n";
+    write(STDERR_FILENO, header, sizeof(header) - 1);
+    backtrace_symbols_fd(frames, count, STDERR_FILENO);
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
 } // namespace
 
+#ifndef __APPLE__
+void darkrift::debug::disable_window_restoration() {}
+bool darkrift::debug::capture_window(const std::string&) { return false; }
+#endif
+
 void darkrift::debug::init(int argc, char** argv) {
+    disable_window_restoration();
     for (int i = 1; i < argc; i++) {
         if (std::strcmp(argv[i], "--autostart") == 0) {
             autostart = true;
@@ -180,9 +203,18 @@ void darkrift::debug::init(int argc, char** argv) {
             load_script(argv[++i]);
         } else if (std::strcmp(argv[i], "--shots") == 0 && i + 1 < argc) {
             shots_dir = argv[++i];
+        } else if (std::strcmp(argv[i], "--background") == 0) {
+            // Must be set before SDL initializes video.
+            SDL_SetHint(SDL_HINT_MAC_BACKGROUND_APP, "1");
+        } else if (std::strcmp(argv[i], "--mute") == 0) {
+            // The dummy driver accepts and discards samples without opening a device.
+            SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
         }
     }
     if (!script.empty()) {
+        for (int sig : { SIGSEGV, SIGBUS, SIGABRT, SIGILL }) {
+            signal(sig, crash_handler);
+        }
         std::string cmd = "mkdir -p '" + shots_dir + "'";
         std::system(cmd.c_str());
     }

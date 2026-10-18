@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <vector>
 #include <unordered_set>
 #include "darkrift_turbo3d.h"
 #include <memory>
@@ -338,6 +339,33 @@ void zelda64::renderer::RT64Context::send_dl(const OSTask* task) {
     check_texture_pack_actions();
     app->state->rsp->reset();
 
+    // DARKRIFT_LOG_TASKS=<n>: log every graphics task from the n-th one on.
+    static const long log_tasks_from = std::getenv("DARKRIFT_LOG_TASKS") ? std::atol(std::getenv("DARKRIFT_LOG_TASKS")) : -1;
+    static uint64_t task_counter = 0;
+    task_counter++;
+    if (log_tasks_from >= 0 && (long)task_counter > log_tasks_from) {
+        fprintf(stderr, "[darkrift] task #%llu ucode 0x%05X data 0x%06X size 0x%X\n", (unsigned long long)task_counter,
+                ucode, task->t.data_ptr & 0xFFFFFF, task->t.data_size);
+    }
+
+    // DARKRIFT_DUMP_TASK=<n>: write RDRAM as it is at the n-th graphics task to /tmp/darkrift_task_<n>.bin
+    static const long dump_task = std::getenv("DARKRIFT_DUMP_TASK") ? std::atol(std::getenv("DARKRIFT_DUMP_TASK")) : -1;
+    if (dump_task >= 0 && (long)task_counter == dump_task) {
+        char path[128];
+        snprintf(path, sizeof(path), "/tmp/darkrift_task_%ld.bin", dump_task);
+        if (FILE* f = fopen(path, "wb")) {
+            const uint32_t base = task->t.data_ptr & 0xFFFFFF;
+            // The whole 8 MB of RDRAM (big-endian), so display lists can be followed offline.
+            for (uint32_t off = 0; off < 0x800000; off += 4) {
+                const uint32_t w = *reinterpret_cast<const uint32_t*>(app->core.RDRAM + off);
+                const uint8_t be[4] = { uint8_t(w >> 24), uint8_t(w >> 16), uint8_t(w >> 8), uint8_t(w) };
+                fwrite(be, 1, 4, f);
+            }
+            fclose(f);
+            fprintf(stderr, "[darkrift] dumped task %ld (ucode 0x%05X, data 0x%06X) to %s\n", dump_task, ucode, base, path);
+        }
+    }
+
     // RT64 has no Turbo3D (gspDarkRift3D) support: translate the task's object list into a
     // Fast3D display list and render it with the game's Fast3D microcode instead.
     if (ucode == darkrift_turbo3d_text) {
@@ -346,13 +374,125 @@ void zelda64::renderer::RT64Context::send_dl(const OSTask* task) {
             return;
         }
         const uint32_t dl = darkrift::translate_turbo3d(app->core.RDRAM, task->t.data_ptr & 0x3FFFFFF, task->t.data_size);
+        // DARKRIFT_DUMP_T3D=<n>: write the n-th translated Turbo3D display list (and the
+        // scratch area after it) to /tmp/darkrift_t3d_<n>.bin
+        static const long dump_t3d = std::getenv("DARKRIFT_DUMP_T3D") ? std::atol(std::getenv("DARKRIFT_DUMP_T3D")) : -1;
+        static long t3d_counter = 0;
+        if (t3d_counter++ == dump_t3d) {
+            char path[128];
+            snprintf(path, sizeof(path), "/tmp/darkrift_t3d_%ld.bin", dump_t3d);
+            if (FILE* f = fopen(path, "wb")) {
+                for (uint32_t off = 0; off < 0x300000; off += 4) {
+                    const uint32_t w = *reinterpret_cast<const uint32_t*>(app->core.RDRAM + dl + off);
+                    const uint8_t be[4] = { uint8_t(w >> 24), uint8_t(w >> 16), uint8_t(w >> 8), uint8_t(w) };
+                    fwrite(be, 1, 4, f);
+                }
+                fclose(f);
+                fprintf(stderr, "[darkrift] dumped translated Turbo3D DL %ld to %s\n", dump_t3d, path);
+            }
+        }
         app->interpreter->loadUCodeGBI(darkrift_fast3d_text, darkrift_fast3d_data, true);
         app->processDisplayLists(app->core.RDRAM, dl, 0, true);
         return;
     }
 
+    // DARKRIFT_SKIP_DLS=<from>-<to>: replace the top-level G_DL calls with index in [from, to) of each
+    // Fast3D task with no-ops while it is rendered, to find which display list draws what.
+    static const char* skip_env = std::getenv("DARKRIFT_SKIP_DLS");
+    std::vector<std::pair<uint32_t, uint32_t>> skipped;
+    if (skip_env != nullptr) {
+        long from = 0, to = 0;
+        std::sscanf(skip_env, "%ld-%ld", &from, &to);
+        uint32_t* words = reinterpret_cast<uint32_t*>(app->core.RDRAM);
+        long index = 0;
+        for (uint32_t a = task->t.data_ptr & 0x3FFFFC; a < (task->t.data_ptr & 0x3FFFFC) + task->t.data_size; a += 8) {
+            const uint32_t op = words[a / 4] >> 24;
+            if (op == 0xB8) {
+                break;
+            }
+            static const char* skip_ops = std::getenv("DARKRIFT_SKIP_BG_OPS");
+            char op_hex[4];
+            snprintf(op_hex, sizeof(op_hex), "%02X", op);
+            if (skip_ops != nullptr && std::strstr(skip_ops, op_hex) != nullptr) {
+                // DARKRIFT-TEMP: drop every top-level texture command (the 2D background).
+                skipped.emplace_back(a, words[a / 4]);
+                skipped.emplace_back(a + 4, words[a / 4 + 1]);
+                words[a / 4] = 0;
+                words[a / 4 + 1] = 0;
+                continue;
+            }
+            if (op == 0xF6 && std::getenv("DARKRIFT_SKIP_FILLS") != nullptr) {
+                skipped.emplace_back(a, words[a / 4]);
+                skipped.emplace_back(a + 4, words[a / 4 + 1]);
+                words[a / 4] = 0xF6FFCFFC;
+                words[a / 4 + 1] = 0x00FF0FF0;
+            }
+            if (op == 0xE4 && std::getenv("DARKRIFT_SKIP_TEXRECTS") != nullptr) {
+                // Push the rectangle off screen.
+                skipped.emplace_back(a, words[a / 4]);
+                skipped.emplace_back(a + 4, words[a / 4 + 1]);
+                words[a / 4] = 0xE4FFCFFC;
+                words[a / 4 + 1] = 0x00FF0FF0;
+            }
+            if (op == 0x06 && index == 1 && std::getenv("DARKRIFT_HUD_FILL") != nullptr) {
+                // DARKRIFT-TEMP: draw the HUD's rectangles as solid red fills.
+                const uint32_t start = words[a / 4 + 1] & 0x3FFFF8;
+                for (uint32_t b = start; ; b += 8) {
+                    const uint32_t w0 = words[b / 4];
+                    if ((w0 >> 24) == 0xB8) break;
+                    skipped.emplace_back(b, w0);
+                    skipped.emplace_back(b + 4, words[b / 4 + 1]);
+                    if (b == start) {
+                        words[b / 4] = 0xBA001402; words[b / 4 + 1] = 0x00300000;
+                    } else if (b == start + 8) {
+                        words[b / 4] = 0xF7000000; words[b / 4 + 1] = 0xF801F801;
+                    } else if ((w0 >> 24) == 0xE4) {
+                        words[b / 4] = (w0 & 0x00FFFFFF) | 0xF6000000;
+                    } else if ((w0 >> 24) != 0xB8) {
+                        words[b / 4] = 0; words[b / 4 + 1] = 0;
+                    }
+                }
+            }
+            if (op == 0x06 && index == 1 && std::getenv("DARKRIFT_HUD_NO_AC") != nullptr) {
+                // DARKRIFT-TEMP: disable alpha compare for the HUD list (its first command is a tile sync slot).
+                const uint32_t b = (words[a / 4 + 1] & 0x3FFFF8) + 8;
+                if ((words[b / 4] >> 24) == 0xE8) {
+                    skipped.emplace_back(b, words[b / 4]);
+                    skipped.emplace_back(b + 4, words[b / 4 + 1]);
+                    words[b / 4] = 0xB9000002;
+                    words[b / 4 + 1] = std::atoi(std::getenv("DARKRIFT_HUD_NO_AC"));
+                }
+            }
+            if (op == 0x06 && index == 1 && std::getenv("DARKRIFT_HUD_TEX_SWAP") != nullptr) {
+                // DARKRIFT-TEMP: point the HUD's texture and palette loads at the stage background's.
+                for (uint32_t b = words[a / 4 + 1] & 0x3FFFF8; ; b += 8) {
+                    const uint32_t w0 = words[b / 4];
+                    if ((w0 >> 24) == 0xB8) break;
+                    if ((w0 >> 24) == 0xFD) {
+                        skipped.emplace_back(b + 4, words[b / 4 + 1]);
+                        skipped.emplace_back(b, w0);
+                        const bool tlut = ((w0 >> 19) & 3) == 2;
+                        words[b / 4 + 1] = tlut ? 0x002461E0 : 0x00235FE0;
+                        if (!tlut) words[b / 4] = 0xFD4801FF;
+                    }
+                }
+            }
+            if (op == 0x06) {
+                if (index >= from && index < to) {
+                    skipped.emplace_back(a, words[a / 4]);
+                    words[a / 4] = 0;
+                }
+                index++;
+            }
+        }
+    }
+
     app->interpreter->loadUCodeGBI(task->t.ucode & 0x3FFFFFF, task->t.ucode_data & 0x3FFFFFF, true);
     app->processDisplayLists(app->core.RDRAM, task->t.data_ptr & 0x3FFFFFF, 0, true);
+
+    for (const auto& [a, w] : skipped) {
+        reinterpret_cast<uint32_t*>(app->core.RDRAM)[a / 4] = w;
+    }
 }
 
 void zelda64::renderer::RT64Context::update_screen() {
@@ -360,6 +500,13 @@ void zelda64::renderer::RT64Context::update_screen() {
 }
 
 void zelda64::renderer::RT64Context::shutdown() {
+#ifdef __APPLE__
+    // This is the last step of quitting. Tearing RT64 down on Metal races its idle thread, which
+    // releases already freed objects and crashes the process on exit, so end the process here instead.
+    fflush(stdout);
+    fflush(stderr);
+    std::_Exit(EXIT_SUCCESS);
+#endif
     if (app != nullptr) {
         app->end();
     }

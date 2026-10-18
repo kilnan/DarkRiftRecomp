@@ -1,0 +1,75 @@
+# Reach a battle, then move and attack while capturing.
+wait 1500
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+wait 300
+shot f01_fight_start
+hold DR 30
+press A 6
+press B 6
+press CU 6
+shot f02
+hold DR 30
+press A 6
+press B 6
+press CU 6
+shot f03
+hold DR 30
+press A 6
+press B 6
+press CU 6
+shot f04
+hold DR 30
+press A 6
+press B 6
+press CU 6
+shot f05
+hold DR 30
+press A 6
+press B 6
+press CU 6
+shot f06
+hold DR 30
+press A 6
+press B 6
+press CU 6
+shot f07
+hold DR 30
+press A 6
+press B 6
+press CU 6
+shot f08
+hold DR 30
+press A 6
+press B 6
+press CU 6
+shot f09
+quit

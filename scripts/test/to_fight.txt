@@ -1,0 +1,34 @@
+wait 1500
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+press START 10
+wait 50
+wait 90
+shot f01
+wait 90
+shot f02
+wait 90
+shot f03
+wait 90
+shot f04
+wait 90
+shot f05
+wait 90
+shot f06
+quit

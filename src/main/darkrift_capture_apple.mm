@@ -1,4 +1,4 @@
-// Captures the game's own window to a PNG for the debug/test mode.
+// macOS helpers: window capture for the debug/test mode and window restoration settings.
 #include <string>
 
 #import <AppKit/AppKit.h>
@@ -43,4 +43,10 @@ bool darkrift::debug::capture_window(const std::string& path) {
     }
     CGImageRelease(image);
     return ok;
+}
+
+void darkrift::debug::disable_window_restoration() {
+    // After a crash AppKit asks whether to reopen the app's windows with a modal alert during launch.
+    // There is nothing to restore, and the alert is invisible (and blocks forever) with --background.
+    [[NSUserDefaults standardUserDefaults] registerDefaults:@{ @"ApplePersistenceIgnoreState": @YES }];
 }
