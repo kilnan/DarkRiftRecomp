@@ -1,4 +1,5 @@
 #include <unordered_set>
+#include "darkrift_turbo3d.h"
 #include <memory>
 #include <cstring>
 #include <variant>
@@ -323,6 +324,7 @@ zelda64::renderer::RT64Context::~RT64Context() = default;
 
 // Physical addresses of Dark Rift's two graphics microcodes (from the decomp ELF).
 static constexpr uint32_t darkrift_fast3d_text = 0x00046560;
+static constexpr uint32_t darkrift_fast3d_data = 0x00055860;
 static constexpr uint32_t darkrift_turbo3d_text = 0x00047990;
 
 void zelda64::renderer::RT64Context::send_dl(const OSTask* task) {
@@ -332,14 +334,18 @@ void zelda64::renderer::RT64Context::send_dl(const OSTask* task) {
         fprintf(stderr, "[darkrift] graphics task with ucode 0x%08X data 0x%08X\n", ucode, task->t.ucode_data & 0x3FFFFFF);
     }
 
-    // Turbo3D (gspDarkRift3D) is not supported by RT64 yet: skip those tasks for now
-    // so the Fast3D parts of the frame can be rendered.
+    check_texture_pack_actions();
+    app->state->rsp->reset();
+
+    // RT64 has no Turbo3D (gspDarkRift3D) support: translate the task's object list into a
+    // Fast3D display list and render it with the game's Fast3D microcode instead.
     if (ucode == darkrift_turbo3d_text) {
+        const uint32_t dl = darkrift::translate_turbo3d(app->core.RDRAM, task->t.data_ptr & 0x3FFFFFF, task->t.data_size);
+        app->interpreter->loadUCodeGBI(darkrift_fast3d_text, darkrift_fast3d_data, true);
+        app->processDisplayLists(app->core.RDRAM, dl, 0, true);
         return;
     }
 
-    check_texture_pack_actions();
-    app->state->rsp->reset();
     app->interpreter->loadUCodeGBI(task->t.ucode & 0x3FFFFFF, task->t.ucode_data & 0x3FFFFFF, true);
     app->processDisplayLists(app->core.RDRAM, task->t.data_ptr & 0x3FFFFFF, 0, true);
 }
